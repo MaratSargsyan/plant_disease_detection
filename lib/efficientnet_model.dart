@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 
 /// Handles downloading and running EfficientNet TFLite models.
 ///
@@ -40,11 +41,15 @@ class EfficientNetModel {
 
     if (await file.exists()) return localPath;
 
-    // Model download from Firebase Storage is disabled.
-    // To enable, add firebase_storage to pubspec.yaml
-    // For now, we just return the local path where the model would be stored.
-    // In production, models should be included in app bundle or downloaded from CDN.
+    // Load model from assets
+    String fileName = modelName;
+    if (modelName == 'all_crops') {
+      fileName = 'for_all_crops';
+    }
+    final assetPath = 'assets/models/best_float32_$fileName.tflite';
+    final byteData = await rootBundle.load(assetPath);
     await file.parent.create(recursive: true);
+    await file.writeAsBytes(byteData.buffer.asUint8List());
     return localPath;
   }
 

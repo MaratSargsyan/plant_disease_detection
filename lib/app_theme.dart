@@ -2,151 +2,86 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 
 class AppTheme {
-  // Vivid lime accent
-  static const Color colorAccent = Color(0xFF00FF88); // Bright lime green
-  static const Color colorAccentDark = Color(0xFF00CC66); // Slightly darker lime
+  // ── Brand colors ───────────────────────────────────────────────────────────
+  static const Color colorAccent     = Color(0xFF00FF88);
+  static const Color colorAccentDark = Color(0xFF00CC66);
 
-  // Dark theme colors
-  static const Color colorPrimary = Color(0xFF1A1A1A);
-  static const Color colorPrimaryDark = Color(0xFF0F0F0F);
-  static const Color colorBackground = Color(0xFF0A0A0A);
-  static const Color colorSurface = Color(0xFF1E1E1E);
-  static const Color colorWhite = Colors.white;
+  // ── Dark surfaces ──────────────────────────────────────────────────────────
+  static const Color colorBackground  = Color(0xFF000000); // true black
+  static const Color colorPrimary     = Color(0xFF0A0A0A);
+  static const Color colorPrimaryDark = Color(0xFF050505);
+  static const Color colorSurface     = Color(0xFF111111);
+
+  // ── Glass card tokens ──────────────────────────────────────────────────────
+  static final Color colorCard       = Colors.white.withOpacity(0.07);
+  static final Color colorCardBorder = Colors.white.withOpacity(0.10);
+
+  // ── Text ───────────────────────────────────────────────────────────────────
+  static const Color colorWhite   = Colors.white;
   static const Color colorWhite70 = Colors.white70;
 
-  // Glassmorphic card colors
-  static const Color colorCard = Color(0x1AFFFFFF); // Semi-transparent white
-  static const Color colorCardBorder = Color(0x33FFFFFF);
-
+  // ── Theme ──────────────────────────────────────────────────────────────────
   static ThemeData get darkTheme => ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         colorScheme: const ColorScheme.dark(
           primary: colorAccent,
           secondary: colorAccentDark,
-          surface: colorSurface,
+          surface: Color(0xFF111111),
           onPrimary: Colors.black,
           onSecondary: Colors.black,
-          onSurface: colorWhite,
+          onSurface: Colors.white,
         ),
         scaffoldBackgroundColor: colorBackground,
-        fontFamily: 'Inter', // Modern font
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
-          foregroundColor: colorWhite,
+          foregroundColor: Colors.white,
           elevation: 0,
           titleTextStyle: TextStyle(
-            fontFamily: 'Inter',
-            fontSize: 24,
-            fontWeight: FontWeight.w600,
-            color: colorWhite,
-          ),
-        ),
-        cardTheme: CardTheme(
-          color: colorCard,
-          elevation: 0, // No shadow for glassmorphic
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: colorCardBorder, width: 1),
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+            letterSpacing: -0.5,
           ),
         ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
           backgroundColor: colorAccent,
           foregroundColor: Colors.black,
-          elevation: 4,
+          elevation: 0,
         ),
         bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          backgroundColor: colorPrimary,
+          backgroundColor: Color(0xFF0A0A0A),
           selectedItemColor: colorAccent,
-          unselectedItemColor: colorWhite70,
+          unselectedItemColor: Colors.white54,
         ),
         textTheme: const TextTheme(
           headlineLarge: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w700,
-            color: colorWhite,
-            fontFamily: 'Raleway',
+            fontSize: 28, fontWeight: FontWeight.w700, color: Colors.white,
+            letterSpacing: -0.5,
           ),
           headlineMedium: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w700,
-            color: colorWhite,
-            fontFamily: 'Raleway',
+            fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white,
+            letterSpacing: -0.5,
           ),
           titleLarge: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: colorWhite,
-            fontFamily: 'Raleway',
+            fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white,
           ),
           titleMedium: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w500,
-            color: colorWhite,
-            fontFamily: 'Raleway',
+            fontSize: 16, fontWeight: FontWeight.w500, color: Colors.white,
           ),
           bodyLarge: TextStyle(
-            fontSize: 16,
-            color: colorWhite,
-            fontFamily: 'Raleway',
-            height: 1.6,
+            fontSize: 16, color: Colors.white, height: 1.6,
           ),
           bodyMedium: TextStyle(
-            fontSize: 14,
-            color: Colors.white70,
-            fontFamily: 'Raleway',
+            fontSize: 14, color: Colors.white70,
           ),
         ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: colorPrimary,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(30),
-            borderSide: BorderSide.none,
-          ),
-          hintStyle: const TextStyle(color: Colors.white38),
-        ),
-        dividerColor: colorPrimary,
-        iconTheme: const IconThemeData(color: colorWhite),
+        iconTheme: const IconThemeData(color: Colors.white),
+        dividerColor: Color(0xFF1A1A1A),
       );
 }
 
-class AppStrings {
-  static const String appName = 'Plant';
-  static const String history = 'History';
-  static const String library = 'Library';
-  static const String maps = 'Maps';
-  static const String crops = 'Crops';
-  static const String result = 'Result';
-  static const String symptoms = 'Symptoms';
-  static const String comments = 'Comments';
-  static const String management = 'Management';
-  static const String hear = 'Hear';
-  static const String save = 'Save';
-  static const String locate = 'Locate';
-  static const String delete = 'Delete';
-  static const String internetRequired = 'Internet connection is required';
-  static const String locationRequired = 'Location permission is required';
-  static const String gpsRequired = 'GPS is required';
-  static const String cameraRequired = 'Camera permission is required';
-  static const String savedSuccessfully = 'Saved successfully';
-  static const String deletedSuccessfully = 'Deleted successfully';
-  static const String doneSuccessfully = 'Done successfully';
-  static const String unknownDisease = 'We cannot recognize this disease';
-  static const String historyEmpty = 'Your check history appears here';
-  static const String chooseCrop = 'Please choose your crop to continue';
-  static const String importImage = 'Import';
-  static const String sortBy = 'Sort by';
-  static const String name = 'Name';
-  static const String category = 'Category';
-  static const String crop = 'Crop';
-  static const String notSupported = 'This feature is not supported on your device';
-  static const String languageNotSupported = 'Your language is not supported';
-  static const String somethingWrong = 'Something went wrong, please try again';
-  static const String firestoreLibrary = 'library';
-  static const String firestoreCrops = 'crops';
-}
-
+// ── Glassmorphic card widget ───────────────────────────────────────────────────
 class GlassmorphicCard extends StatelessWidget {
   final Widget child;
   final double borderRadius;
@@ -168,15 +103,15 @@ class GlassmorphicCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(borderRadius),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
             padding: padding ?? const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
-              color: AppTheme.colorCard,
+              color: Colors.white.withOpacity(0.07),
               borderRadius: BorderRadius.circular(borderRadius),
               border: Border.all(
-                color: AppTheme.colorCardBorder,
-                width: 1.0,
+                color: Colors.white.withOpacity(0.12),
+                width: 0.5,
               ),
             ),
             child: child,
@@ -185,4 +120,25 @@ class GlassmorphicCard extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── String constants ───────────────────────────────────────────────────────────
+class AppStrings {
+  static const String appName           = 'Plant';
+  static const String history           = 'History';
+  static const String library           = 'Library';
+  static const String maps              = 'Maps';
+  static const String crops             = 'Crops';
+  static const String result            = 'Result';
+  static const String symptoms          = 'Symptoms';
+  static const String comments          = 'Comments';
+  static const String management        = 'Management';
+  static const String hear              = 'Hear';
+  static const String save              = 'Save';
+  static const String locate            = 'Locate';
+  static const String delete            = 'Delete';
+  static const String historyEmpty      = 'Your check history appears here';
+  static const String importImage       = 'Import';
+  static const String unknownDisease    = 'We cannot recognize this disease';
+  static const String savedSuccessfully = 'Saved successfully';
 }
