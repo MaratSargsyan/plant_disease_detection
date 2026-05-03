@@ -13,7 +13,7 @@ class _CropsScreenState extends State<CropsScreen> {
   final List<Map<String, String>> _crops = [
     {'name': 'Tomato', 'reference': 'tomato'},
     {'name': 'Potato', 'reference': 'potato'},
-    {'name': 'Another Plants', 'reference': 'all_crops'},
+    {'name': 'General Plant', 'reference': 'all_crops'},
   ];
 
   Future<void> _selectCrop(String reference) async {

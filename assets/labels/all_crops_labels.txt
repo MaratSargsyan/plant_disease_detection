@@ -1,0 +1,15 @@
+Bacterial Spot
+Early Blight
+Late Blight
+Leaf Mold
+Powdery Mildew
+Rust
+Septoria Leaf Spot
+Spider Mites
+Target Spot
+Yellow Leaf Curl Virus
+Mosaic Virus
+Fusarium Wilt
+Verticillium Wilt
+Root Rot
+Healthy

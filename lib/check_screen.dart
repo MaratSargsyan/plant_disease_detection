@@ -5,6 +5,7 @@ import 'package:flutter_application_1/efficientnet_model.dart';
 import 'dart:io';
 import 'package:flutter_application_1/database_helper.dart';
 import 'package:flutter_application_1/models.dart';
+import 'package:flutter/services.dart';
 
 enum CheckMode { camera, import }
 
@@ -20,15 +21,32 @@ class _CheckScreenState extends State<CheckScreen> {
   File? _image;
   bool _isProcessing = false;
   String? _result;
+  List<String> _labels = [];
 
   @override
   void initState() {
     super.initState();
+    _loadLabels();
     if (widget.mode == CheckMode.camera) {
       _pickImage(ImageSource.camera);
     } else {
       _pickImage(ImageSource.gallery);
     }
+  }
+
+  Future<void> _loadLabels() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cropRef = prefs.getString('cropReference') ?? 'all_crops';
+    String labelFile;
+    if (cropRef == 'tomato') {
+      labelFile = 'assets/labels/tomato_labels.txt';
+    } else if (cropRef == 'potato') {
+      labelFile = 'assets/labels/potato_labels.txt';
+    } else {
+      labelFile = 'assets/labels/all_crops_labels.txt';
+    }
+    final labelsString = await rootBundle.loadString(labelFile);
+    _labels = labelsString.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -55,17 +73,7 @@ class _CheckScreenState extends State<CheckScreen> {
       final prefs = await SharedPreferences.getInstance();
       final cropRef = prefs.getString('cropReference') ?? 'all_crops';
 
-      // Assume number of classes based on crop
-      int numClasses;
-      if (cropRef == 'tomato') {
-        numClasses = 10; // Example, adjust based on model
-      } else if (cropRef == 'potato') {
-        numClasses = 3; // Example
-      } else {
-        numClasses = 15; // For all crops
-      }
-
-      final model = diseaseClassifierModel(cropRef, numClasses);
+      final model = diseaseClassifierModel(cropRef, _labels.length);
       final probabilities = await model.runInference(_image!);
 
       // Find the class with highest probability
@@ -78,15 +86,16 @@ class _CheckScreenState extends State<CheckScreen> {
         }
       }
 
-      // For demo, just show the class index and probability
+      String diseaseName = maxIndex < _labels.length ? _labels[maxIndex] : 'Unknown Disease';
+
       setState(() {
-        _result = 'Disease Class: $maxIndex\nConfidence: ${(maxProb * 100).toStringAsFixed(2)}%';
+        _result = 'Disease: $diseaseName\nConfidence: ${(maxProb * 100).toStringAsFixed(2)}%';
       });
 
       // Save to history
       final db = DatabaseHelper.instance;
       await db.addHistory(History(
-        historyDisease: 'Disease $maxIndex',
+        historyDisease: diseaseName,
         historyPercentage: '${(maxProb * 100).toStringAsFixed(2)}%',
         historyImage: _image!.path,
       ));
