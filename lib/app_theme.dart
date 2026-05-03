@@ -1,53 +1,64 @@
 import 'package:flutter/material.dart';
+import 'dart:ui';
 
 class AppTheme {
-  static const Color colorPrimary = Color(0xFF212121);
-  static const Color colorPrimaryDark = Color(0xFF121212);
-  static const Color colorAccent = Color(0xFFFFC107);
-  static const Color colorWhite = Colors.white;
-  static const Color colorBackground = Color(0xFF121212);
+  // Vivid lime accent
+  static const Color colorAccent = Color(0xFF00FF88); // Bright lime green
+  static const Color colorAccentDark = Color(0xFF00CC66); // Slightly darker lime
+
+  // Dark theme colors
+  static const Color colorPrimary = Color(0xFF1A1A1A);
+  static const Color colorPrimaryDark = Color(0xFF0F0F0F);
+  static const Color colorBackground = Color(0xFF0A0A0A);
   static const Color colorSurface = Color(0xFF1E1E1E);
-  static const Color colorCard = Color(0xFF2A2A2A);
+  static const Color colorWhite = Colors.white;
+  static const Color colorWhite70 = Colors.white70;
+
+  // Glassmorphic card colors
+  static const Color colorCard = Color(0x1AFFFFFF); // Semi-transparent white
+  static const Color colorCardBorder = Color(0x33FFFFFF);
 
   static ThemeData get darkTheme => ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         colorScheme: const ColorScheme.dark(
           primary: colorAccent,
-          secondary: colorAccent,
+          secondary: colorAccentDark,
           surface: colorSurface,
           onPrimary: Colors.black,
           onSecondary: Colors.black,
           onSurface: colorWhite,
         ),
         scaffoldBackgroundColor: colorBackground,
-        fontFamily: 'Raleway',
+        fontFamily: 'Inter', // Modern font
         appBarTheme: const AppBarTheme(
-          backgroundColor: colorPrimaryDark,
+          backgroundColor: Colors.transparent,
           foregroundColor: colorWhite,
           elevation: 0,
           titleTextStyle: TextStyle(
-            fontFamily: 'Raleway',
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
+            fontFamily: 'Inter',
+            fontSize: 24,
+            fontWeight: FontWeight.w600,
             color: colorWhite,
           ),
         ),
         cardTheme: CardTheme(
           color: colorCard,
-          elevation: 4.0,
+          elevation: 0, // No shadow for glassmorphic
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: colorCardBorder, width: 1),
           ),
         ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
           backgroundColor: colorAccent,
           foregroundColor: Colors.black,
+          elevation: 4,
         ),
         bottomNavigationBarTheme: const BottomNavigationBarThemeData(
           backgroundColor: colorPrimary,
           selectedItemColor: colorAccent,
-          unselectedItemColor: Colors.grey,
+          unselectedItemColor: colorWhite70,
         ),
         textTheme: const TextTheme(
           headlineLarge: TextStyle(
@@ -101,7 +112,7 @@ class AppTheme {
 }
 
 class AppStrings {
-  static const String appName = 'PlantPlanet';
+  static const String appName = 'Plant';
   static const String history = 'History';
   static const String library = 'Library';
   static const String maps = 'Maps';
@@ -134,4 +145,44 @@ class AppStrings {
   static const String somethingWrong = 'Something went wrong, please try again';
   static const String firestoreLibrary = 'library';
   static const String firestoreCrops = 'crops';
+}
+
+class GlassmorphicCard extends StatelessWidget {
+  final Widget child;
+  final double borderRadius;
+  final EdgeInsetsGeometry? padding;
+  final EdgeInsetsGeometry? margin;
+
+  const GlassmorphicCard({
+    super.key,
+    required this.child,
+    this.borderRadius = 16.0,
+    this.padding,
+    this.margin,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: margin ?? const EdgeInsets.all(8.0),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+          child: Container(
+            padding: padding ?? const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: AppTheme.colorCard,
+              borderRadius: BorderRadius.circular(borderRadius),
+              border: Border.all(
+                color: AppTheme.colorCardBorder,
+                width: 1.0,
+              ),
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
 }

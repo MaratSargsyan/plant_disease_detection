@@ -108,11 +108,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.fromLTRB(24, 32, 24, 8),
       child: Row(
         children: [
+          Container(
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.colorAccent.withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Icon(
+              Icons.eco, // Minimalist 3D leaf icon with shadow
+              color: AppTheme.colorAccent,
+              size: 32,
+            ),
+          ),
+          const SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'PlantPlanet',
+                'Plant',
                 style: TextStyle(
                   fontSize: 13,
                   color: AppTheme.colorAccent,
@@ -192,13 +209,9 @@ class _HistoryItem extends StatelessWidget {
         builder: (_) => DiseaseScreen(diseaseName: history.historyDisease),
       )),
       onLongPress: () => _showOptionsSheet(context),
-      child: Container(
+      child: GlassmorphicCard(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppTheme.colorCard,
-          borderRadius: BorderRadius.circular(12),
-        ),
         child: Row(
           children: [
             _buildImage(),
