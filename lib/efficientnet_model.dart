@@ -1,132 +1,103 @@
-import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 
-/// Handles downloading and running EfficientNet TFLite models.
-///
-/// Architecture replaces Firebase ML Model Interpreter with on-device
-/// TFLite inference using EfficientNet-B0/B4 depending on the model name.
-///
-/// Model naming convention (same as original Kotlin app):
-///   - "plant"          → plant/not-plant binary classifier (EfficientNet-B0, 224×224)
-///   - "<cropReference>" → crop-specific disease classifier  (EfficientNet-B4, 299×299)
 class EfficientNetModel {
   final String modelName;
-  final int inputSize;  // 224 for plant detector, 299 for disease classifier
-  final int outputSize; // number of classes
 
   Interpreter? _interpreter;
+  int _inputSize = 224;   // overwritten after loadModel() reads the real shape
+  int _outputSize = 1;    // overwritten after loadModel() reads the real shape
 
-  EfficientNetModel({
-    required this.modelName,
-    required this.inputSize,
-    required this.outputSize,
-  });
+  EfficientNetModel({required this.modelName});
 
-  // ── Model loading ──────────────────────────────────────────────────────────
+  // ── Loading ────────────────────────────────────────────────────────────────
 
-  /// Downloads model from Firebase Storage if not cached, then loads it.
   Future<void> loadModel() async {
-    final modelPath = await _getOrDownloadModel();
-    _interpreter = Interpreter.fromFile(File(modelPath));
+    final assetKey = _assetKey();
+    final rawAsset = await rootBundle.load(assetKey);
+    final bytes = rawAsset.buffer.asUint8List();
+
+    final opts = InterpreterOptions()..threads = 2;
+    _interpreter = Interpreter.fromBuffer(bytes, options: opts);
+    _interpreter!.allocateTensors();
+
+    // Read the real input shape [1, H, W, 3] and output shape [1, n] / [n].
+    final inShape  = _interpreter!.getInputTensor(0).shape;
+    final outShape = _interpreter!.getOutputTensor(0).shape;
+
+    _inputSize  = inShape.length >= 2 ? inShape[1] : 224;
+    _outputSize = outShape.last;
   }
 
-  Future<String> _getOrDownloadModel() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final localPath = '${dir.path}/models/$modelName.tflite';
-    final file = File(localPath);
-
-    if (await file.exists()) return localPath;
-
-    // Load model from assets
-    String fileName = modelName;
+  String _assetKey() {
     if (modelName == 'all_crops') {
-      fileName = 'for_all_crops';
+      return 'assets/models/best_float32_for_all_crops.tflite';
     }
-    final assetPath = 'assets/models/best_float32_$fileName.tflite';
-    final byteData = await rootBundle.load(assetPath);
-    await file.parent.create(recursive: true);
-    await file.writeAsBytes(byteData.buffer.asUint8List());
-    return localPath;
+    return 'assets/models/best_float32_$modelName.tflite';
   }
 
   // ── Inference ──────────────────────────────────────────────────────────────
 
-  /// Runs inference and returns raw probability list (length == [outputSize]).
-  Future<List<double>> runInference(File imageFile) async {
+  Future<List<double>> runInference(Uint8List imageBytes) async {
     if (_interpreter == null) await loadModel();
 
-    final imageBytes = await imageFile.readAsBytes();
     final decoded = img.decodeImage(imageBytes);
-    if (decoded == null) throw Exception('Failed to decode image');
+    if (decoded == null) throw Exception('Could not decode image');
 
-    final input = _preprocessImage(decoded);
-    final output = [List<double>.filled(outputSize, 0.0)];
-
-    _interpreter!.run(input, output);
-
-    final logits = output[0];
-    return _softmax(logits);
-  }
-
-  /// Runs inference directly from a decoded image object (for camera frames).
-  Future<List<double>> runInferenceFromImage(img.Image image) async {
-    if (_interpreter == null) await loadModel();
-
-    final input = _preprocessImage(image);
-    final output = [List<double>.filled(outputSize, 0.0)];
+    final input  = _preprocess(decoded);
+    final output = [List<double>.filled(_outputSize, 0.0)];
 
     _interpreter!.run(input, output);
 
-    final logits = output[0];
-    return _softmax(logits);
+    final raw = List<double>.from(output[0]);
+    return _normalize(raw);
   }
 
   // ── Pre-processing ─────────────────────────────────────────────────────────
 
-  /// Resizes to [inputSize]×[inputSize], normalises to [0, 1], returns
-  /// Float32List shaped [1, H, W, 3] for the TFLite interpreter.
-  List<List<List<List<double>>>> _preprocessImage(img.Image image) {
+  // Resize to model's real input size, normalise to [0, 1].
+  // YOLO-cls and most float32 TFLite classifiers expect [0, 1] RGB input.
+  List<List<List<List<double>>>> _preprocess(img.Image image) {
     final resized = img.copyResize(
       image,
-      width: inputSize,
-      height: inputSize,
+      width:  _inputSize,
+      height: _inputSize,
       interpolation: img.Interpolation.linear,
     );
 
-    // Build [1, inputSize, inputSize, 3] tensor
-    final tensor = List.generate(
+    return List.generate(
       1,
       (_) => List.generate(
-        inputSize,
+        _inputSize,
         (y) => List.generate(
-          inputSize,
+          _inputSize,
           (x) {
-            final pixel = resized.getPixel(x, y);
-            return [
-              pixel.r / 255.0,
-              pixel.g / 255.0,
-              pixel.b / 255.0,
-            ];
+            final p = resized.getPixel(x, y);
+            return [p.r / 255.0, p.g / 255.0, p.b / 255.0];
           },
         ),
       ),
     );
-    return tensor;
+  }
+
+  // ── Output normalisation ───────────────────────────────────────────────────
+
+  // If the model already outputs a probability distribution (sum ≈ 1),
+  // return it as-is.  Otherwise apply softmax to convert logits → probs.
+  List<double> _normalize(List<double> raw) {
+    final sum = raw.fold(0.0, (a, b) => a + b);
+    if ((sum - 1.0).abs() < 0.05) return raw; // already probabilities
+    return _softmax(raw);
   }
 
   List<double> _softmax(List<double> logits) {
-    final maxVal = logits.reduce((a, b) => a > b ? a : b);
-    final exps = logits.map((v) => _exp(v - maxVal)).toList();
-    final sum = exps.reduce((a, b) => a + b);
-    return exps.map((v) => v / sum).toList();
-  }
-
-  double _exp(double x) {
-    return math.exp(x);
+    final maxV = logits.reduce(math.max);
+    final exps = logits.map((v) => math.exp(v - maxV)).toList();
+    final sumE = exps.fold(0.0, (a, b) => a + b);
+    return exps.map((v) => v / sumE).toList();
   }
 
   void dispose() {
@@ -135,16 +106,7 @@ class EfficientNetModel {
   }
 }
 
-// ── Convenience factory methods ────────────────────────────────────────────────
+// ── Factories ──────────────────────────────────────────────────────────────────
 
-/// Creates the binary plant-detector model (EfficientNet-B0, 224×224, 2 classes).
-EfficientNetModel plantDetectorModel() =>
-    EfficientNetModel(modelName: 'plant', inputSize: 224, outputSize: 2);
-
-/// Creates a crop-specific disease-classifier (EfficientNet-B4, 299×299).
-EfficientNetModel diseaseClassifierModel(String cropReference, int numClasses) =>
-    EfficientNetModel(
-      modelName: cropReference,
-      inputSize: 299,
-      outputSize: numClasses,
-    );
+EfficientNetModel diseaseClassifierModel(String cropReference) =>
+    EfficientNetModel(modelName: cropReference);

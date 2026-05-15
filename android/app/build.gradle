@@ -27,6 +27,12 @@ android {
     compileSdkVersion 34
     ndkVersion flutter.ndkVersion
 
+    // Prevent aapt from compressing .tflite files — TFLite needs them
+    // uncompressed in the APK so it can memory-map them at runtime.
+    aaptOptions {
+        noCompress 'tflite'
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8

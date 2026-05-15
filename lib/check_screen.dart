@@ -1,13 +1,14 @@
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_application_1/efficientnet_model.dart';
 import 'package:flutter_application_1/app_theme.dart';
 import 'package:flutter_application_1/disease_screen.dart';
-import 'dart:io';
 import 'package:flutter_application_1/database_helper.dart';
 import 'package:flutter_application_1/models.dart';
-import 'package:flutter/services.dart';
 
 enum CheckMode { camera, import }
 
@@ -79,8 +80,10 @@ class _CheckScreenState extends State<CheckScreen> {
       final prefs = await SharedPreferences.getInstance();
       final cropRef = prefs.getString('cropReference') ?? 'all_crops';
 
-      final model = diseaseClassifierModel(cropRef, _labels.length);
-      final probabilities = await model.runInference(_image!);
+      final Uint8List imageBytes = await _image!.readAsBytes();
+
+      final model = diseaseClassifierModel(cropRef);
+      final probabilities = await model.runInference(imageBytes);
       model.dispose();
 
       int maxIndex = 0;
@@ -92,7 +95,10 @@ class _CheckScreenState extends State<CheckScreen> {
         }
       }
 
-      final name = maxIndex < _labels.length ? _labels[maxIndex] : 'Unknown Disease';
+      // Map model output index to label — fall back gracefully if out of range.
+      final name = (_labels.isNotEmpty && maxIndex < _labels.length)
+          ? _labels[maxIndex]
+          : 'Unknown Disease';
       final confidence = '${(maxProb * 100).toStringAsFixed(1)}%';
 
       await DatabaseHelper.instance.addHistory(History(
