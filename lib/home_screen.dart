@@ -1,6 +1,10 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'app_theme.dart';
+import 'check_screen.dart';
+import 'crops_screen.dart';
+import 'library_screen.dart';
+import 'maps_screen.dart';
 import 'models.dart';
 import 'database_helper.dart';
 import 'glass_nav_sheet.dart';
@@ -54,8 +58,29 @@ class _HomeScreenState extends State<HomeScreen>
       barrierColor: Colors.black54,
       isScrollControlled: true,
       builder: (_) => GlassNavSheet(
-        onNavigate: (label) {
+        onNavigate: (label) async {
           setState(() => _screenTitle = label);
+          switch (label) {
+            case 'Crops':
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CropsScreen()),
+              );
+            case 'Import':
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CheckScreen(mode: CheckMode.import),
+                ),
+              );
+              _loadHistory();
+            case 'Library':
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const LibraryScreen()),
+              );
+            case 'Maps':
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MapsScreen()),
+              );
+          }
         },
         onRefresh: _loadHistory,
       ),
@@ -82,7 +107,14 @@ class _HomeScreenState extends State<HomeScreen>
       floatingActionButton: ScaleTransition(
         scale: _fabScale,
         child: FloatingActionButton(
-          onPressed: _loadHistory,
+          onPressed: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const CheckScreen(mode: CheckMode.camera),
+              ),
+            );
+            _loadHistory();
+          },
           backgroundColor: AppTheme.colorAccent,
           elevation: 0,
           child: const Icon(Icons.camera_alt_rounded, color: Colors.black, size: 24),
