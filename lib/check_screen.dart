@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -75,6 +76,15 @@ class _CheckScreenState extends State<CheckScreen> {
   Future<void> _processImage() async {
     if (_image == null) return;
     setState(() => _isProcessing = true);
+
+    if (kIsWeb) {
+      setState(() {
+        _diseaseName = 'Web not supported';
+        _confidenceText = 'Use the Android app for disease detection.';
+        _isProcessing = false;
+      });
+      return;
+    }
 
     try {
       final prefs = await SharedPreferences.getInstance();
