@@ -120,6 +120,6 @@ save () {
 APP_ARGS=$(save "$@")
 
 # Collect all arguments for the java command
-eval set -- $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS "\"-Djava.security.manager=allow\"" "-classpath" "\"$CLASSPATH\"" org.gradle.wrapper.GradleWrapperMain "$APP_ARGS"
+eval set -- $DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS "\"-Djava.security.manager=allow\"" "-classpath" "\"$CLASSPATH\"" org.gradle.wrapper.GradleWrapperMain $APP_ARGS
 
 exec "$JAVA_EXE" "$@"

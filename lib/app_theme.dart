@@ -13,8 +13,8 @@ class AppTheme {
   static const Color colorSurface     = Color(0xFF111111);
 
   // ── Glass card tokens ──────────────────────────────────────────────────────
-  static final Color colorCard       = Colors.white.withOpacity(0.07);
-  static final Color colorCardBorder = Colors.white.withOpacity(0.10);
+  static final Color colorCard       = Colors.white.withValues(alpha: 0.07);
+  static final Color colorCardBorder = Colors.white.withValues(alpha: 0.10);
 
   // ── Text ───────────────────────────────────────────────────────────────────
   static const Color colorWhite   = Colors.white;
@@ -77,7 +77,7 @@ class AppTheme {
           ),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
-        dividerColor: Color(0xFF1A1A1A),
+        dividerColor: const Color(0xFF1A1A1A),
       );
 }
 
@@ -107,10 +107,10 @@ class GlassmorphicCard extends StatelessWidget {
           child: Container(
             padding: padding ?? const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.07),
+              color: Colors.white.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(borderRadius),
               border: Border.all(
-                color: Colors.white.withOpacity(0.12),
+                color: Colors.white.withValues(alpha: 0.12),
                 width: 0.5,
               ),
             ),

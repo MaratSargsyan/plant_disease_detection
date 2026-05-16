@@ -1,10 +1,13 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_application_1/ai_service.dart';
 import 'package:flutter_application_1/efficientnet_model.dart';
 import 'package:flutter_application_1/app_theme.dart';
 import 'package:flutter_application_1/disease_screen.dart';
@@ -26,7 +29,11 @@ class _CheckScreenState extends State<CheckScreen> {
   bool _isProcessing = false;
   String? _diseaseName;
   String? _confidenceText;
+  String? _aiAnalysis;
+  bool _loadingAi = false;
   List<String> _labels = [];
+  double? _lat;
+  double? _lng;
 
   @override
   void initState() {
@@ -66,10 +73,42 @@ class _CheckScreenState extends State<CheckScreen> {
     final pickedFile = await picker.pickImage(source: source);
     if (!mounted) return;
     if (pickedFile != null) {
-      setState(() => _image = File(pickedFile.path));
+      // Copy to app docs so the path remains stable after the picker clears temp files.
+      final stable = await _copyToAppDocs(File(pickedFile.path));
+      setState(() => _image = stable);
       _processImage();
     } else {
       Navigator.of(context).pop();
+    }
+  }
+
+  Future<File> _copyToAppDocs(File src) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final ext = p.extension(src.path).isNotEmpty ? p.extension(src.path) : '.jpg';
+    final dest = File(p.join(
+        dir.path, 'checks', '${DateTime.now().millisecondsSinceEpoch}$ext'));
+    await dest.parent.create(recursive: true);
+    return src.copy(dest.path);
+  }
+
+  Future<void> _captureLocation() async {
+    try {
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.deniedForever ||
+          perm == LocationPermission.denied) {
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+      ).timeout(const Duration(seconds: 8));
+      _lat = pos.latitude;
+      _lng = pos.longitude;
+    } catch (_) {
+      // Location unavailable — continue without it
     }
   }
 
@@ -86,10 +125,11 @@ class _CheckScreenState extends State<CheckScreen> {
       return;
     }
 
+    await _captureLocation();
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final cropRef = prefs.getString('cropReference') ?? 'all_crops';
-
       final Uint8List imageBytes = await _image!.readAsBytes();
 
       final model = diseaseClassifierModel(cropRef);
@@ -105,7 +145,6 @@ class _CheckScreenState extends State<CheckScreen> {
         }
       }
 
-      // Map model output index to label — fall back gracefully if out of range.
       final name = (_labels.isNotEmpty && maxIndex < _labels.length)
           ? _labels[maxIndex]
           : 'Unknown Disease';
@@ -115,24 +154,120 @@ class _CheckScreenState extends State<CheckScreen> {
         historyDisease: name,
         historyPercentage: confidence,
         historyImage: _image!.path,
+        historyLat: _lat,
+        historyLng: _lng,
       ));
 
       if (mounted) {
         setState(() {
           _diseaseName = name;
           _confidenceText = confidence;
+          _isProcessing = false;
         });
       }
+
+      // AI analysis fires after TFLite result is shown so the screen
+      // is responsive immediately.
+      _runAiAnalysis(name, confidence);
     } catch (e) {
       if (mounted) {
         setState(() {
           _diseaseName = 'Detection failed';
           _confidenceText = e.toString();
+          _isProcessing = false;
         });
       }
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  Future<void> _runAiAnalysis(String name, String confidence) async {
+    final key = await AiService.getApiKey();
+    if (key == null || key.isEmpty || _image == null) return;
+
+    if (mounted) setState(() => _loadingAi = true);
+
+    final analysis = await AiService.analyseImage(
+      imageFile: _image!,
+      diseaseName: name,
+      confidence: confidence,
+    );
+
+    if (mounted) {
+      setState(() {
+        _aiAnalysis = analysis;
+        _loadingAi = false;
+      });
+    }
+  }
+
+  Future<void> _showApiKeyDialog() async {
+    final existing = await AiService.getApiKey();
+    final ctrl = TextEditingController(text: existing ?? '');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Claude API Key',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Enter your Anthropic API key to enable AI image analysis.',
+              style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withValues(alpha: 0.55)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: ctrl,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'sk-ant-...',
+                hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.3)),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.06),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.15)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.15)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await AiService.saveApiKey(ctrl.text);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (_diseaseName != null &&
+                  _confidenceText != null &&
+                  _image != null) {
+                _runAiAnalysis(_diseaseName!, _confidenceText!);
+              }
+            },
+            child: const Text('Save',
+                style: TextStyle(color: AppTheme.colorAccent)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -148,7 +283,8 @@ class _CheckScreenState extends State<CheckScreen> {
         elevation: 0,
       ),
       body: _image == null
-          ? const Center(child: CircularProgressIndicator(color: AppTheme.colorAccent))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppTheme.colorAccent))
           : _buildContent(),
     );
   }
@@ -161,7 +297,13 @@ class _CheckScreenState extends State<CheckScreen> {
         children: [
           _buildImageCard(),
           const SizedBox(height: 24),
-          if (_isProcessing) _buildProcessingCard() else if (_diseaseName != null) _buildResultCard(),
+          if (_isProcessing)
+            _buildProcessingCard()
+          else if (_diseaseName != null) ...[
+            _buildResultCard(),
+            const SizedBox(height: 14),
+            _buildAiCard(),
+          ],
           const SizedBox(height: 24),
           if (!_isProcessing)
             ElevatedButton(
@@ -169,10 +311,13 @@ class _CheckScreenState extends State<CheckScreen> {
                 backgroundColor: AppTheme.colorAccent,
                 foregroundColor: Colors.black,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Done', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+              child: const Text('Done',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 16)),
             ),
         ],
       ),
@@ -180,14 +325,44 @@ class _CheckScreenState extends State<CheckScreen> {
   }
 
   Widget _buildImageCard() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: Image.file(
-        _image!,
-        height: 280,
-        width: double.infinity,
-        fit: BoxFit.cover,
-      ),
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Image.file(
+            _image!,
+            height: 280,
+            width: double.infinity,
+            fit: BoxFit.cover,
+          ),
+        ),
+        if (_lat != null && _lng != null)
+          Positioned(
+            bottom: 10,
+            left: 10,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.location_on_rounded,
+                      color: Color(0xFF00FF88), size: 12),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${_lat!.toStringAsFixed(4)}, ${_lng!.toStringAsFixed(4)}',
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -195,9 +370,10 @@ class _CheckScreenState extends State<CheckScreen> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1), width: 0.5),
+        border: Border.all(
+            color: Colors.white.withValues(alpha: 0.1), width: 0.5),
       ),
       child: const Column(
         children: [
@@ -214,14 +390,16 @@ class _CheckScreenState extends State<CheckScreen> {
 
   Widget _buildResultCard() {
     final isHealthy = _diseaseName?.toLowerCase() == 'healthy';
-    final accent = isHealthy ? AppTheme.colorAccent : const Color(0xFFFF6B6B);
+    final accent =
+        isHealthy ? AppTheme.colorAccent : const Color(0xFFFF6B6B);
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1), width: 0.5),
+        border: Border.all(
+            color: Colors.white.withValues(alpha: 0.1), width: 0.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,7 +407,9 @@ class _CheckScreenState extends State<CheckScreen> {
           Row(
             children: [
               Icon(
-                isHealthy ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
+                isHealthy
+                    ? Icons.check_circle_rounded
+                    : Icons.warning_amber_rounded,
                 color: accent,
                 size: 20,
               ),
@@ -265,26 +445,28 @@ class _CheckScreenState extends State<CheckScreen> {
             GestureDetector(
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => DiseaseScreen(diseaseName: _diseaseName!),
+                  builder: (_) =>
+                      DiseaseScreen(diseaseName: _diseaseName!),
                 ),
               ),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 10),
                 decoration: BoxDecoration(
-                  color: AppTheme.colorAccent.withOpacity(0.12),
+                  color: AppTheme.colorAccent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: AppTheme.colorAccent.withOpacity(0.3),
+                    color: AppTheme.colorAccent.withValues(alpha: 0.3),
                     width: 0.5,
                   ),
                 ),
-                child: Row(
+                child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.info_outline_rounded,
+                    Icon(Icons.info_outline_rounded,
                         color: AppTheme.colorAccent, size: 16),
-                    const SizedBox(width: 8),
-                    const Text(
+                    SizedBox(width: 8),
+                    Text(
                       'View disease details',
                       style: TextStyle(
                         color: AppTheme.colorAccent,
@@ -297,6 +479,87 @@ class _CheckScreenState extends State<CheckScreen> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAiCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.colorAccent.withValues(alpha: 0.18),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded,
+                  color: AppTheme.colorAccent, size: 15),
+              const SizedBox(width: 7),
+              const Text(
+                'AI ANALYSIS',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.colorAccent,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: _showApiKeyDialog,
+                child: Icon(Icons.settings_rounded,
+                    size: 16,
+                    color: Colors.white.withValues(alpha: 0.3)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_loadingAi)
+            Row(
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: AppTheme.colorAccent.withValues(alpha: 0.6),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Analysing with Claude…',
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white.withValues(alpha: 0.45)),
+                ),
+              ],
+            )
+          else if (_aiAnalysis != null)
+            Text(
+              _aiAnalysis!,
+              style: const TextStyle(
+                  fontSize: 13, color: Colors.white70, height: 1.55),
+            )
+          else
+            GestureDetector(
+              onTap: _showApiKeyDialog,
+              child: Text(
+                'Tap to configure Claude API key for AI image analysis.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withValues(alpha: 0.35),
+                  height: 1.5,
+                ),
+              ),
+            ),
         ],
       ),
     );

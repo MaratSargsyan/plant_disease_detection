@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'app_theme.dart';
 import 'check_screen.dart';
 import 'crops_screen.dart';
@@ -16,12 +17,11 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   List<History> _historyList = [];
   late AnimationController _fabController;
   late Animation<double> _fabScale;
-  String _screenTitle = 'History';
+  String _currentCrop = 'all_crops';
 
   @override
   void initState() {
@@ -30,12 +30,10 @@ class _HomeScreenState extends State<HomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
-    _fabScale = CurvedAnimation(
-      parent: _fabController,
-      curve: Curves.elasticOut,
-    );
+    _fabScale = CurvedAnimation(parent: _fabController, curve: Curves.elasticOut);
     _fabController.forward();
     _loadHistory();
+    _loadCrop();
   }
 
   @override
@@ -51,6 +49,25 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  Future<void> _loadCrop() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(
+          () => _currentCrop = prefs.getString('cropReference') ?? 'all_crops');
+    }
+  }
+
+  String get _cropLabel {
+    switch (_currentCrop) {
+      case 'tomato':
+        return 'Tomato';
+      case 'potato':
+        return 'Potato';
+      default:
+        return 'General';
+    }
+  }
+
   void _openNavSheet() {
     showModalBottomSheet(
       context: context,
@@ -59,27 +76,22 @@ class _HomeScreenState extends State<HomeScreen>
       isScrollControlled: true,
       builder: (_) => GlassNavSheet(
         onNavigate: (label) async {
-          setState(() => _screenTitle = label);
           switch (label) {
             case 'Crops':
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const CropsScreen()),
-              );
+              await Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const CropsScreen()));
+              _loadCrop();
             case 'Import':
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const CheckScreen(mode: CheckMode.import),
-                ),
-              );
+              await Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const CheckScreen(mode: CheckMode.import),
+              ));
               _loadHistory();
             case 'Library':
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const LibraryScreen()),
-              );
+              await Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const LibraryScreen()));
             case 'Maps':
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const MapsScreen()),
-              );
+              await Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const MapsScreen()));
           }
         },
         onRefresh: _loadHistory,
@@ -87,8 +99,46 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Future<void> _confirmClearHistory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Clear history',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: Text(
+          'All scan history will be deleted. This cannot be undone.',
+          style: TextStyle(
+              fontSize: 14, color: Colors.white.withValues(alpha: 0.55)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear',
+                style: TextStyle(
+                    color: Colors.redAccent, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await DatabaseHelper.instance.clearHistory();
+      _loadHistory();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final diseaseCount =
+        _historyList.where((h) => h.historyDisease.toLowerCase() != 'healthy').length;
+    final healthyCount = _historyList.length - diseaseCount;
+
     return Scaffold(
       backgroundColor: AppTheme.colorBackground,
       body: SafeArea(
@@ -96,6 +146,8 @@ class _HomeScreenState extends State<HomeScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(),
+            if (_historyList.isNotEmpty)
+              _buildStatsRow(diseaseCount, healthyCount),
             Expanded(
               child: _historyList.isEmpty
                   ? _buildEmptyState()
@@ -117,7 +169,8 @@ class _HomeScreenState extends State<HomeScreen>
           },
           backgroundColor: AppTheme.colorAccent,
           elevation: 0,
-          child: const Icon(Icons.camera_alt_rounded, color: Colors.black, size: 24),
+          child: const Icon(Icons.camera_alt_rounded,
+              color: Colors.black, size: 24),
         ),
       ),
       bottomNavigationBar: _buildBottomBar(),
@@ -126,34 +179,108 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+      padding: const EdgeInsets.fromLTRB(24, 28, 16, 8),
       child: Row(
         children: [
           _GlowingLeaf(),
           const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'PLANT',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.colorAccent,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 3,
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'PLANT',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.colorAccent,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 3,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _screenTitle,
-                style: const TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                  letterSpacing: -0.5,
+                SizedBox(height: 2),
+                Text(
+                  'History',
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    letterSpacing: -0.5,
+                  ),
                 ),
+              ],
+            ),
+          ),
+          // Crop badge
+          GestureDetector(
+            onTap: () async {
+              await Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const CropsScreen()));
+              _loadCrop();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppTheme.colorAccent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                    color: AppTheme.colorAccent.withValues(alpha: 0.25),
+                    width: 0.5),
               ),
-            ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.eco_rounded,
+                      color: AppTheme.colorAccent, size: 13),
+                  const SizedBox(width: 5),
+                  Text(
+                    _cropLabel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.colorAccent,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_historyList.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: _confirmClearHistory,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.delete_sweep_rounded,
+                    color: Colors.white.withValues(alpha: 0.35), size: 18),
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsRow(int diseaseCount, int healthyCount) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
+      child: Row(
+        children: [
+          _StatChip(
+            label: '$diseaseCount disease${diseaseCount == 1 ? '' : 's'}',
+            color: const Color(0xFFFF6B6B),
+            icon: Icons.warning_amber_rounded,
+          ),
+          const SizedBox(width: 8),
+          _StatChip(
+            label: '$healthyCount healthy',
+            color: AppTheme.colorAccent,
+            icon: Icons.check_circle_outline_rounded,
           ),
         ],
       ),
@@ -165,13 +292,14 @@ class _HomeScreenState extends State<HomeScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.eco_outlined, size: 64, color: Colors.white.withOpacity(0.1)),
+          Icon(Icons.eco_outlined,
+              size: 64, color: Colors.white.withValues(alpha: 0.1)),
           const SizedBox(height: 16),
           Text(
             'Your check history appears here',
             style: TextStyle(
               fontSize: 14,
-              color: Colors.white.withOpacity(0.25),
+              color: Colors.white.withValues(alpha: 0.25),
             ),
           ),
         ],
@@ -204,13 +332,46 @@ class _HomeScreenState extends State<HomeScreen>
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.06),
+                color: Colors.white.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.1), width: 0.5),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.1), width: 0.5),
               ),
-              child: const Icon(Icons.menu_rounded, color: Colors.white70, size: 20),
+              child: const Icon(Icons.menu_rounded,
+                  color: Colors.white70, size: 20),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Stat chip ──────────────────────────────────────────────────────────────────
+class _StatChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  final IconData icon;
+  const _StatChip(
+      {required this.label, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.2), width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12, color: color, fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -259,7 +420,7 @@ class _GlowingLeafState extends State<_GlowingLeaf>
               height: 38 * scale,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppTheme.colorAccent.withOpacity(0.18 * opacity),
+                color: AppTheme.colorAccent.withValues(alpha: 0.18 * opacity),
               ),
             ),
             const Icon(Icons.eco_rounded, color: Color(0xFF00FF88), size: 26),
@@ -339,36 +500,63 @@ class _HistoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDisease = history.historyDisease.toLowerCase() != 'healthy';
     return GestureDetector(
       onLongPress: () => _showOptions(context),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.07),
+          color: Colors.white.withValues(alpha: 0.07),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.1), width: 0.5),
+          border: Border.all(
+              color: Colors.white.withValues(alpha: 0.1), width: 0.5),
         ),
         child: Row(
           children: [
             _buildImage(),
             const SizedBox(width: 14),
             Expanded(
-              child: Text(
-                history.historyDisease,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    history.historyDisease,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (history.hasLocation) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(Icons.location_on_rounded,
+                            size: 10,
+                            color: Colors.white.withValues(alpha: 0.3)),
+                        const SizedBox(width: 3),
+                        Text(
+                          '${history.historyLat!.toStringAsFixed(3)}, '
+                          '${history.historyLng!.toStringAsFixed(3)}',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white.withValues(alpha: 0.3)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
             Text(
               history.historyPercentage,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF00FF88),
+                color: isDisease
+                    ? const Color(0xFFFF6B6B)
+                    : const Color(0xFF00FF88),
               ),
             ),
           ],
@@ -421,7 +609,8 @@ class _OptionsSheet extends StatelessWidget {
         children: [
           ListTile(
             leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
-            title: const Text('Delete', style: TextStyle(color: Colors.white)),
+            title: const Text('Delete',
+                style: TextStyle(color: Colors.white)),
             onTap: () async {
               Navigator.pop(context);
               await DatabaseHelper.instance.deleteHistory(history);

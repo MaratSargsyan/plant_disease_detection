@@ -33,7 +33,7 @@ class DiseaseScreen extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.help_outline_rounded,
-                size: 56, color: Colors.white.withOpacity(0.2)),
+                size: 56, color: Colors.white.withValues(alpha: 0.2)),
             const SizedBox(height: 16),
             Text(
               diseaseName,
@@ -48,7 +48,7 @@ class DiseaseScreen extends StatelessWidget {
             Text(
               'No detailed information is available for this disease yet.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.4)),
+              style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.4)),
             ),
           ],
         ),
@@ -123,9 +123,9 @@ class _HeaderChip extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.3), width: 0.5),
+            border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
           ),
           child: Text(
             label.toUpperCase(),
@@ -161,9 +161,9 @@ class _InfoCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.08), width: 0.5),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 0.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

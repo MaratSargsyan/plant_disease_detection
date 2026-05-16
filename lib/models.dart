@@ -77,25 +77,35 @@ class History {
   final String historyDisease;
   final String historyPercentage;
   final String historyImage;
+  final double? historyLat;
+  final double? historyLng;
 
   History({
     this.historyId,
     required this.historyDisease,
     required this.historyPercentage,
     required this.historyImage,
+    this.historyLat,
+    this.historyLng,
   });
+
+  bool get hasLocation => historyLat != null && historyLng != null;
 
   factory History.fromMap(Map<String, dynamic> map) => History(
         historyId: map['ID'] as int?,
         historyDisease: map['Disease'] as String,
         historyPercentage: map['Percentage'] as String,
         historyImage: map['Image'] as String,
+        historyLat: (map['Lat'] as num?)?.toDouble(),
+        historyLng: (map['Lng'] as num?)?.toDouble(),
       );
 
   Map<String, dynamic> toMap() => {
         'Disease': historyDisease,
         'Percentage': historyPercentage,
         'Image': historyImage,
+        'Lat': historyLat,
+        'Lng': historyLng,
       };
 }
 

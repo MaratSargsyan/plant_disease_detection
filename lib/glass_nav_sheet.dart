@@ -151,10 +151,10 @@ class _GlassNavSheetState extends State<GlassNavSheet>
               filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.08),
+                  color: Colors.white.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(30),
                   border: Border.all(
-                    color: Colors.white.withOpacity(0.18),
+                    color: Colors.white.withValues(alpha: 0.18),
                     width: 0.5,
                   ),
                 ),
@@ -167,7 +167,7 @@ class _GlassNavSheetState extends State<GlassNavSheet>
                       height: 3,
                       margin: const EdgeInsets.only(top: 14, bottom: 16),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
+                        color: Colors.white.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(99),
                       ),
                     ),
@@ -190,11 +190,11 @@ class _GlassNavSheetState extends State<GlassNavSheet>
                             height: 50,
                             child: Container(
                               decoration: BoxDecoration(
-                                color: AppTheme.colorAccent.withOpacity(0.10),
+                                color: AppTheme.colorAccent.withValues(alpha: 0.10),
                                 borderRadius: BorderRadius.circular(14),
                                 border: Border.all(
                                   color:
-                                      AppTheme.colorAccent.withOpacity(0.22),
+                                      AppTheme.colorAccent.withValues(alpha: 0.22),
                                   width: 0.5,
                                 ),
                               ),
@@ -204,7 +204,7 @@ class _GlassNavSheetState extends State<GlassNavSheet>
                           // ── rows ──────────────────────────────────────────
                           Padding(
                             padding:
-                                EdgeInsets.symmetric(vertical: _kStackPad),
+                                const EdgeInsets.symmetric(vertical: _kStackPad),
                             child: Column(
                               children: List.generate(
                                 _kItems.length,
@@ -245,7 +245,6 @@ class _NavRow extends StatelessWidget {
   final VoidCallback onTap;
 
   const _NavRow({
-    super.key,
     required this.item,
     required this.isActive,
     required this.pulseAnim,
@@ -284,7 +283,7 @@ class _NavRow extends StatelessWidget {
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
                                 color:
-                                    item.color.withOpacity((1 - v) * 0.55),
+                                    item.color.withValues(alpha: (1 - v) * 0.55),
                                 width: 1.2,
                               ),
                             ),
@@ -298,7 +297,7 @@ class _NavRow extends StatelessWidget {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
                         color: isActive
-                            ? item.color.withOpacity(0.15)
+                            ? item.color.withValues(alpha: 0.15)
                             : Colors.transparent,
                       ),
                       child: AnimatedScale(
@@ -324,7 +323,7 @@ class _NavRow extends StatelessWidget {
                         isActive ? FontWeight.w600 : FontWeight.w500,
                     color: isActive
                         ? Colors.white
-                        : Colors.white.withOpacity(0.55),
+                        : Colors.white.withValues(alpha: 0.55),
                   ),
                   child: Text(item.label),
                 ),
@@ -344,7 +343,7 @@ class _NavRow extends StatelessWidget {
                     fontWeight: FontWeight.w300,
                     color: isActive
                         ? AppTheme.colorAccent
-                        : Colors.white.withOpacity(0.18),
+                        : Colors.white.withValues(alpha: 0.18),
                   ),
                   child: const Text('›'),
                 ),

@@ -38,7 +38,7 @@ class LibraryScreen extends StatelessWidget {
           _SectionHeader(title: 'Diseases (${diseases.length})'),
           ...diseases.map((d) => _DiseaseRow(data: d, color: _categoryColor(d['category']!))),
           const SizedBox(height: 16),
-          _SectionHeader(title: 'Healthy'),
+          const _SectionHeader(title: 'Healthy'),
           _DiseaseRow(data: healthy, color: _categoryColor(healthy['category']!)),
           const SizedBox(height: 24),
         ],
@@ -89,9 +89,9 @@ class _DiseaseRow extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.06),
+          color: Colors.white.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withOpacity(0.09), width: 0.5),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.09), width: 0.5),
         ),
         child: Row(
           children: [
