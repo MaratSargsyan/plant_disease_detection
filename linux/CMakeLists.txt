@@ -143,3 +143,12 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Bundle the TFLite C library if the user has built it (see tools/setup_tflite.sh).
+set(TFLITE_LIB "${CMAKE_SOURCE_DIR}/../blobs/libtensorflowlite_c-linux.so")
+if(EXISTS "${TFLITE_LIB}")
+  install(
+    FILES "${TFLITE_LIB}"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/../blobs/"
+    COMPONENT Runtime)
+endif()

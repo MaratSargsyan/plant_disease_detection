@@ -41,16 +41,18 @@ class _CheckScreenState extends State<CheckScreen> {
     _init();
   }
 
+  // Desktop platforms (Linux / Windows / macOS) have no camera delegate.
+  bool get _isDesktop =>
+      !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+
   // Load labels first, then pick image — prevents race condition where
   // _labels is empty when inference runs.
   Future<void> _init() async {
     await _loadLabels();
     if (!mounted) return;
-    if (widget.mode == CheckMode.camera) {
-      _pickImage(ImageSource.camera);
-    } else {
-      _pickImage(ImageSource.gallery);
-    }
+    // On desktop there is no camera — always open the file picker.
+    final useCamera = widget.mode == CheckMode.camera && !_isDesktop;
+    _pickImage(useCamera ? ImageSource.camera : ImageSource.gallery);
   }
 
   Future<void> _loadLabels() async {
@@ -171,9 +173,15 @@ class _CheckScreenState extends State<CheckScreen> {
       _runAiAnalysis(name, confidence);
     } catch (e) {
       if (mounted) {
+        final msg = e.toString();
+        final isMissingLib = msg.contains('libtensorflowlite') ||
+            msg.contains('dynamic library');
         setState(() {
           _diseaseName = 'Detection failed';
-          _confidenceText = e.toString();
+          _confidenceText = isMissingLib
+              ? 'TFLite native library not found on this platform.\n'
+                  'Run tools/setup_tflite.sh to build it for Linux/Windows.'
+              : msg;
           _isProcessing = false;
         });
       }
