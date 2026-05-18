@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_theme.dart';
 import 'check_screen.dart';
 import 'crops_screen.dart';
+import 'disease_screen.dart';
 import 'library_screen.dart';
 import 'maps_screen.dart';
 import 'models.dart';
@@ -130,6 +131,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (confirmed == true) {
       await DatabaseHelper.instance.clearHistory();
       _loadHistory();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('History cleared'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 
@@ -492,16 +502,39 @@ class _AnimatedHistoryItemState extends State<_AnimatedHistoryItem>
   }
 }
 
+String _relativeTime(DateTime? dt) {
+  if (dt == null) return '';
+  final diff = DateTime.now().difference(dt);
+  if (diff.inMinutes < 1) return 'Just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  if (diff.inDays == 1) return 'Yesterday';
+  if (diff.inDays < 7) return '${diff.inDays}d ago';
+  return '${dt.day}/${dt.month}/${dt.year}';
+}
+
 class _HistoryCard extends StatelessWidget {
   final History history;
   final VoidCallback onDelete;
 
   const _HistoryCard({required this.history, required this.onDelete});
 
+  bool get _isTappable {
+    final n = history.historyDisease;
+    return n != 'Detection failed' && n != 'Web not supported';
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDisease = history.historyDisease.toLowerCase() != 'healthy';
+    final timeLabel = _relativeTime(history.historyCreatedAt);
     return GestureDetector(
+      onTap: _isTappable
+          ? () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) =>
+                    DiseaseScreen(diseaseName: history.historyDisease),
+              ))
+          : null,
       onLongPress: () => _showOptions(context),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
@@ -528,10 +561,10 @@ class _HistoryCard extends StatelessWidget {
                       color: Colors.white,
                     ),
                   ),
-                  if (history.hasLocation) ...[
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      if (history.hasLocation) ...[
                         Icon(Icons.location_on_rounded,
                             size: 10,
                             color: Colors.white.withValues(alpha: 0.3)),
@@ -543,21 +576,38 @@ class _HistoryCard extends StatelessWidget {
                               fontSize: 11,
                               color: Colors.white.withValues(alpha: 0.3)),
                         ),
+                        if (timeLabel.isNotEmpty) const SizedBox(width: 8),
                       ],
-                    ),
-                  ],
+                      if (timeLabel.isNotEmpty)
+                        Text(
+                          timeLabel,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.white.withValues(alpha: 0.28)),
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
-            Text(
-              history.historyPercentage,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: isDisease
-                    ? const Color(0xFFFF6B6B)
-                    : const Color(0xFF00FF88),
-              ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  history.historyPercentage,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDisease
+                        ? const Color(0xFFFF6B6B)
+                        : const Color(0xFF00FF88),
+                  ),
+                ),
+                if (_isTappable)
+                  const Icon(Icons.chevron_right_rounded,
+                      color: Colors.white24, size: 16),
+              ],
             ),
           ],
         ),
@@ -612,11 +662,19 @@ class _OptionsSheet extends StatelessWidget {
             title: const Text('Delete',
                 style: TextStyle(color: Colors.white)),
             onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.pop(context);
               await DatabaseHelper.instance.deleteHistory(history);
               final f = File(history.historyImage);
               if (f.existsSync()) f.deleteSync();
               onDelete();
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text('Scan deleted'),
+                  behavior: SnackBarBehavior.floating,
+                  duration: Duration(seconds: 2),
+                ),
+              );
             },
           ),
         ],

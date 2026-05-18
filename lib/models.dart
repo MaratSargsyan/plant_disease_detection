@@ -79,6 +79,7 @@ class History {
   final String historyImage;
   final double? historyLat;
   final double? historyLng;
+  final DateTime? historyCreatedAt;
 
   History({
     this.historyId,
@@ -87,6 +88,7 @@ class History {
     required this.historyImage,
     this.historyLat,
     this.historyLng,
+    this.historyCreatedAt,
   });
 
   bool get hasLocation => historyLat != null && historyLng != null;
@@ -98,6 +100,9 @@ class History {
         historyImage: map['Image'] as String,
         historyLat: (map['Lat'] as num?)?.toDouble(),
         historyLng: (map['Lng'] as num?)?.toDouble(),
+        historyCreatedAt: map['CreatedAt'] != null
+            ? DateTime.tryParse(map['CreatedAt'] as String)
+            : null,
       );
 
   Map<String, dynamic> toMap() => {

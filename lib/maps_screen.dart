@@ -122,14 +122,10 @@ class _MapsScreenState extends State<MapsScreen> {
           options: MapOptions(
             initialCenter: centre,
             initialZoom: 13,
+            backgroundColor: const Color(0xFF0D1117),
             onTap: (_, __) => setState(() => _selected = null),
           ),
           children: [
-            TileLayer(
-              urlTemplate:
-                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.example.flutter_application_1',
-            ),
             MarkerLayer(
               markers: _pins.map((h) {
                 final isDisease =

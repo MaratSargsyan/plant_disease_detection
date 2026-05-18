@@ -10,7 +10,7 @@ class DatabaseHelper {
   static DatabaseHelper get instance => _instance ??= DatabaseHelper._();
 
   static const String _dbName = 'History.db';
-  static const int _dbVersion = 2;
+  static const int _dbVersion = 3;
   static const String _tableName = 'History';
   static const String _colId = 'ID';
   static const String _colDisease = 'Disease';
@@ -18,6 +18,7 @@ class DatabaseHelper {
   static const String _colImage = 'Image';
   static const String _colLat = 'Lat';
   static const String _colLng = 'Lng';
+  static const String _colCreatedAt = 'CreatedAt';
 
   Future<Database> get database async {
     _database ??= await _initDatabase();
@@ -43,7 +44,8 @@ class DatabaseHelper {
         $_colPercentage TEXT,
         $_colImage TEXT,
         $_colLat REAL,
-        $_colLng REAL
+        $_colLng REAL,
+        $_colCreatedAt TEXT
       )
     ''');
   }
@@ -53,17 +55,21 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE $_tableName ADD COLUMN $_colLat REAL');
       await db.execute('ALTER TABLE $_tableName ADD COLUMN $_colLng REAL');
     }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE $_tableName ADD COLUMN $_colCreatedAt TEXT');
+    }
   }
 
   Future<List<History>> getHistory() async {
     final db = await database;
-    final rows = await db.query(_tableName);
+    final rows = await db.query(_tableName, orderBy: '$_colId DESC');
     return rows.map(History.fromMap).toList();
   }
 
   Future<int> addHistory(History history) async {
     final db = await database;
-    return db.insert(_tableName, history.toMap());
+    return db.insert(_tableName, history.toMap()
+      ..[_colCreatedAt] = DateTime.now().toIso8601String());
   }
 
   Future<int> deleteHistory(History history) async {
