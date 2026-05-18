@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_application_1/ai_service.dart';
 import 'package:flutter_application_1/efficientnet_model.dart';
 import 'package:flutter_application_1/app_theme.dart';
 import 'package:flutter_application_1/disease_screen.dart';
@@ -14,6 +15,9 @@ import 'package:flutter_application_1/database_helper.dart';
 import 'package:flutter_application_1/models.dart';
 
 enum CheckMode { camera, import }
+
+// Possible states for the AI enhancement card.
+enum _AiState { idle, loading, done, offline, noKey }
 
 class CheckScreen extends StatefulWidget {
   final CheckMode mode;
@@ -32,18 +36,18 @@ class _CheckScreenState extends State<CheckScreen> {
   double? _lat;
   double? _lng;
 
+  _AiState _aiState = _AiState.idle;
+  String? _aiAnalysis;
+
   @override
   void initState() {
     super.initState();
     _init();
   }
 
-  // Desktop platforms (Linux / Windows / macOS) have no camera delegate.
   bool get _isDesktop =>
       !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
 
-  // Load labels first, then pick image — prevents race condition where
-  // _labels is empty when inference runs.
   Future<void> _init() async {
     await _loadLabels();
     if (!mounted) return;
@@ -105,9 +109,7 @@ class _CheckScreenState extends State<CheckScreen> {
       ).timeout(const Duration(seconds: 8));
       _lat = pos.latitude;
       _lng = pos.longitude;
-    } catch (_) {
-      // Location unavailable — continue without it
-    }
+    } catch (_) {}
   }
 
   Future<void> _processImage() async {
@@ -128,11 +130,20 @@ class _CheckScreenState extends State<CheckScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final cropRef = prefs.getString('cropReference') ?? 'all_crops';
+      // ignore: avoid_print
+      print('[DETECT] cropRef=$cropRef labels=${_labels.length}');
       final Uint8List imageBytes = await _image!.readAsBytes();
+      // ignore: avoid_print
+      print('[DETECT] image bytes=${imageBytes.length}');
 
+      // ── On-device TFLite inference (always offline-capable) ──────────────
       final model = diseaseClassifierModel(cropRef);
+      // ignore: avoid_print
+      print('[DETECT] running inference…');
       final probabilities = await model.runInference(imageBytes);
       model.dispose();
+      // ignore: avoid_print
+      print('[DETECT] inference done probs=${probabilities.length} max=${probabilities.reduce((a,b)=>a>b?a:b).toStringAsFixed(4)}');
 
       int maxIndex = 0;
       double maxProb = 0;
@@ -163,7 +174,12 @@ class _CheckScreenState extends State<CheckScreen> {
           _isProcessing = false;
         });
       }
-    } catch (e) {
+
+      // ── Optional Claude AI enhancement (online only) ──────────────────────
+      _runAiEnhancement(name, confidence);
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[DETECT] ERROR: $e\n$st');
       if (mounted) {
         final msg = e.toString();
         final isMissingLib = msg.contains('libtensorflowlite') ||
@@ -178,10 +194,115 @@ class _CheckScreenState extends State<CheckScreen> {
                   ? 'Could not read the image. Try a different file.'
                   : 'An unexpected error occurred. Please try again.';
           _isProcessing = false;
+          _aiState = _AiState.idle;
         });
       }
     }
   }
+
+  Future<void> _runAiEnhancement(String name, String confidence) async {
+    if (_image == null) return;
+
+    final key = await AiService.getApiKey();
+    if (key == null || key.isEmpty) {
+      if (mounted) setState(() => _aiState = _AiState.noKey);
+      return;
+    }
+
+    if (mounted) setState(() => _aiState = _AiState.loading);
+
+    final result = await AiService.analyseImage(
+      imageFile: _image!,
+      diseaseName: name,
+      confidence: confidence,
+    );
+
+    if (!mounted) return;
+    if (result.offline) {
+      setState(() => _aiState = _AiState.offline);
+    } else if (result.text != null) {
+      setState(() {
+        _aiAnalysis = result.text;
+        _aiState = _AiState.done;
+      });
+    } else {
+      // Error or no key — fall back to noKey state so user can still configure
+      setState(() => _aiState = _AiState.noKey);
+    }
+  }
+
+  Future<void> _showApiKeyDialog() async {
+    final existing = await AiService.getApiKey();
+    final ctrl = TextEditingController(text: existing ?? '');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Claude API Key',
+            style:
+                TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Enter your Anthropic API key to enable AI-powered analysis.',
+              style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withValues(alpha: 0.55)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: ctrl,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'sk-ant-...',
+                hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.3)),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.06),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.15)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.15)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await AiService.saveApiKey(ctrl.text);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (_diseaseName != null &&
+                  _confidenceText != null &&
+                  _image != null) {
+                _runAiEnhancement(_diseaseName!, _confidenceText!);
+              }
+            },
+            child: const Text('Save',
+                style: TextStyle(color: AppTheme.colorAccent)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -189,15 +310,15 @@ class _CheckScreenState extends State<CheckScreen> {
       backgroundColor: AppTheme.colorBackground,
       appBar: AppBar(
         title: Text(
-          widget.mode == CheckMode.camera ? 'Camera Check' : 'Import Image',
-        ),
+            widget.mode == CheckMode.camera ? 'Camera Check' : 'Import Image'),
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: _image == null
           ? const Center(
-              child: CircularProgressIndicator(color: AppTheme.colorAccent))
+              child:
+                  CircularProgressIndicator(color: AppTheme.colorAccent))
           : _buildContent(),
     );
   }
@@ -212,8 +333,11 @@ class _CheckScreenState extends State<CheckScreen> {
           const SizedBox(height: 24),
           if (_isProcessing)
             _buildProcessingCard()
-          else if (_diseaseName != null)
+          else if (_diseaseName != null) ...[
             _buildResultCard(),
+            const SizedBox(height: 14),
+            _buildAiCard(),
+          ],
           const SizedBox(height: 24),
           if (!_isProcessing)
             ElevatedButton(
@@ -239,12 +363,8 @@ class _CheckScreenState extends State<CheckScreen> {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(20),
-          child: Image.file(
-            _image!,
-            height: 280,
-            width: double.infinity,
-            fit: BoxFit.cover,
-          ),
+          child: Image.file(_image!,
+              height: 280, width: double.infinity, fit: BoxFit.cover),
         ),
         if (_lat != null && _lng != null)
           Positioned(
@@ -289,10 +409,8 @@ class _CheckScreenState extends State<CheckScreen> {
         children: [
           CircularProgressIndicator(color: AppTheme.colorAccent),
           SizedBox(height: 16),
-          Text(
-            'Analysing plant…',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
-          ),
+          Text('Analysing plant…',
+              style: TextStyle(color: Colors.white70, fontSize: 14)),
         ],
       ),
     );
@@ -334,6 +452,10 @@ class _CheckScreenState extends State<CheckScreen> {
                   letterSpacing: 1,
                 ),
               ),
+              const Spacer(),
+              // Offline / online badge
+              if (!isFailed)
+                _ConnectivityBadge(aiState: _aiState),
             ],
           ),
           const SizedBox(height: 12),
@@ -390,6 +512,165 @@ class _CheckScreenState extends State<CheckScreen> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAiCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.colorAccent.withValues(alpha: 0.18),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded,
+                  color: AppTheme.colorAccent, size: 15),
+              const SizedBox(width: 7),
+              const Text(
+                'AI ANALYSIS',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.colorAccent,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: _showApiKeyDialog,
+                child: Icon(Icons.settings_rounded,
+                    size: 16,
+                    color: Colors.white.withValues(alpha: 0.3)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _buildAiBody(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAiBody() {
+    switch (_aiState) {
+      case _AiState.loading:
+        return Row(
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: AppTheme.colorAccent.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text('Analysing with Claude…',
+                style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.white.withValues(alpha: 0.5))),
+          ],
+        );
+
+      case _AiState.done:
+        return Text(
+          _aiAnalysis!,
+          style: const TextStyle(
+              fontSize: 13, color: Colors.white70, height: 1.55),
+        );
+
+      case _AiState.offline:
+        return GestureDetector(
+          onTap: () {
+            if (_diseaseName != null && _confidenceText != null) {
+              _runAiEnhancement(_diseaseName!, _confidenceText!);
+            }
+          },
+          child: Row(
+            children: [
+              const Icon(Icons.cloud_off_rounded,
+                  color: Colors.white38, size: 14),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'No internet — AI analysis unavailable offline. '
+                  'Tap to retry when connected.',
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white.withValues(alpha: 0.38),
+                      height: 1.5),
+                ),
+              ),
+            ],
+          ),
+        );
+
+      case _AiState.noKey:
+        return GestureDetector(
+          onTap: _showApiKeyDialog,
+          child: Text(
+            'Tap to configure Claude API key for AI-powered analysis.',
+            style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.35),
+                height: 1.5),
+          ),
+        );
+
+      case _AiState.idle:
+        return Text(
+          'Preparing AI analysis…',
+          style: TextStyle(
+              fontSize: 13, color: Colors.white.withValues(alpha: 0.3)),
+        );
+    }
+  }
+}
+
+// ── Small connectivity badge shown in the result card header ─────────────────
+class _ConnectivityBadge extends StatelessWidget {
+  final _AiState aiState;
+  const _ConnectivityBadge({required this.aiState});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isOffline = aiState == _AiState.offline;
+    final color =
+        isOffline ? Colors.orange : AppTheme.colorAccent;
+    final icon =
+        isOffline ? Icons.cloud_off_rounded : Icons.cloud_done_rounded;
+    final label = isOffline ? 'Offline' : 'On-device';
+
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+        border:
+            Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 10,
+                  color: color,
+                  fontWeight: FontWeight.w600)),
         ],
       ),
     );

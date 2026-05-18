@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_application_1/app_theme.dart';
+import 'package:flutter_application_1/connectivity_service.dart';
 import 'package:flutter_application_1/database_helper.dart';
 import 'package:flutter_application_1/models.dart';
 
@@ -14,24 +15,48 @@ class MapsScreen extends StatefulWidget {
   State<MapsScreen> createState() => _MapsScreenState();
 }
 
-class _MapsScreenState extends State<MapsScreen> {
+class _MapsScreenState extends State<MapsScreen> with WidgetsBindingObserver {
   List<History> _pins = [];
   bool _loading = true;
+  bool _isOnline = false;
   History? _selected;
   final MapController _mapController = MapController();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Re-check connectivity when the app comes back to the foreground.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkConnectivity();
+  }
+
   Future<void> _load() async {
-    final all = await DatabaseHelper.instance.getHistory();
+    final results = await Future.wait([
+      DatabaseHelper.instance.getHistory(),
+      ConnectivityService.isOnline(),
+    ]);
+    if (!mounted) return;
     setState(() {
-      _pins = all.where((h) => h.hasLocation).toList();
+      _pins = (results[0] as List<History>).where((h) => h.hasLocation).toList();
+      _isOnline = results[1] as bool;
       _loading = false;
     });
+  }
+
+  Future<void> _checkConnectivity() async {
+    final online = await ConnectivityService.isOnline();
+    if (mounted && online != _isOnline) setState(() => _isOnline = online);
   }
 
   @override
@@ -46,7 +71,7 @@ class _MapsScreenState extends State<MapsScreen> {
         actions: [
           if (_pins.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(right: 16),
+              padding: const EdgeInsets.only(right: 8),
               child: Center(
                 child: Container(
                   padding:
@@ -66,6 +91,20 @@ class _MapsScreenState extends State<MapsScreen> {
                 ),
               ),
             ),
+          // Connectivity indicator button
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: GestureDetector(
+              onTap: _checkConnectivity,
+              child: Icon(
+                _isOnline ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                color: _isOnline
+                    ? AppTheme.colorAccent
+                    : Colors.orange,
+                size: 20,
+              ),
+            ),
+          ),
         ],
       ),
       body: _loading
@@ -96,7 +135,7 @@ class _MapsScreenState extends State<MapsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Detections will appear here once the app has location access while scanning.',
+              'Scan a plant with location access enabled and it will appear here.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 13,
@@ -126,13 +165,21 @@ class _MapsScreenState extends State<MapsScreen> {
             onTap: (_, __) => setState(() => _selected = null),
           ),
           children: [
+            // Tile layer only when online — degrades to plain dark bg offline.
+            if (_isOnline)
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.flutter_application_1',
+                errorTileCallback: (tile, error, stackTrace) {
+                  // Silently swallow tile errors (firewall, SSL, etc.)
+                },
+              ),
             MarkerLayer(
               markers: _pins.map((h) {
                 final isDisease =
                     h.historyDisease.toLowerCase() != 'healthy';
-                final color = isDisease
-                    ? const Color(0xFFFF6B6B)
-                    : AppTheme.colorAccent;
+                final color =
+                    isDisease ? const Color(0xFFFF6B6B) : AppTheme.colorAccent;
                 return Marker(
                   point: LatLng(h.historyLat!, h.historyLng!),
                   width: 40,
@@ -166,12 +213,7 @@ class _MapsScreenState extends State<MapsScreen> {
                             size: 16,
                           ),
                         ),
-                        // pin tail
-                        Container(
-                          width: 2,
-                          height: 8,
-                          color: color,
-                        ),
+                        Container(width: 2, height: 8, color: color),
                       ],
                     ),
                   ),
@@ -180,6 +222,49 @@ class _MapsScreenState extends State<MapsScreen> {
             ),
           ],
         ),
+
+        // Offline banner — tiles unavailable but pins still visible.
+        if (!_isOnline)
+          Positioned(
+            top: 12,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: Colors.orange.withValues(alpha: 0.35), width: 0.5),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi_off_rounded,
+                      color: Colors.orange, size: 14),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Offline — map tiles unavailable. '
+                      'Your scan pins are saved and will appear once connected.',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange.withValues(alpha: 0.85),
+                          height: 1.4),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: _checkConnectivity,
+                    child: Text('Retry',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.orange.withValues(alpha: 0.9),
+                            fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ),
+          ),
 
         // Selected pin info card
         if (_selected != null)
@@ -197,6 +282,7 @@ class _MapsScreenState extends State<MapsScreen> {
   }
 }
 
+// ── Pin detail card ────────────────────────────────────────────────────────────
 class _PinCard extends StatelessWidget {
   final History history;
   final VoidCallback onClose;
@@ -205,7 +291,8 @@ class _PinCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDisease = history.historyDisease.toLowerCase() != 'healthy';
-    final accent = isDisease ? const Color(0xFFFF6B6B) : AppTheme.colorAccent;
+    final accent =
+        isDisease ? const Color(0xFFFF6B6B) : AppTheme.colorAccent;
     final file = File(history.historyImage);
 
     return Container(

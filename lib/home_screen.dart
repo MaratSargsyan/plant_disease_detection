@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_theme.dart';
 import 'check_screen.dart';
+import 'connectivity_service.dart';
 import 'crops_screen.dart';
 import 'disease_screen.dart';
 import 'library_screen.dart';
@@ -18,35 +19,51 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   List<History> _historyList = [];
   late AnimationController _fabController;
   late Animation<double> _fabScale;
   String _currentCrop = 'all_crops';
+  bool _isOnline = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _fabController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
-    _fabScale = CurvedAnimation(parent: _fabController, curve: Curves.elasticOut);
+    _fabScale =
+        CurvedAnimation(parent: _fabController, curve: Curves.elasticOut);
     _fabController.forward();
     _loadHistory();
     _loadCrop();
+    _checkConnectivity();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fabController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkConnectivity();
+  }
+
+  Future<void> _checkConnectivity() async {
+    final online = await ConnectivityService.isOnline();
+    if (mounted && online != _isOnline) setState(() => _isOnline = online);
   }
 
   Future<void> _loadHistory() async {
     final list = await DatabaseHelper.instance.getHistory();
     if (mounted) {
-      setState(() => _historyList = list.reversed.toList());
+      setState(() => _historyList = list);
     }
   }
 
@@ -176,6 +193,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             );
             _loadHistory();
+            _checkConnectivity();
           },
           backgroundColor: AppTheme.colorAccent,
           elevation: 0,
@@ -248,6 +266,49 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       fontSize: 12,
                       color: AppTheme.colorAccent,
                       fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Connectivity status pill
+          GestureDetector(
+            onTap: _checkConnectivity,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: (_isOnline ? AppTheme.colorAccent : Colors.orange)
+                    .withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: (_isOnline ? AppTheme.colorAccent : Colors.orange)
+                      .withValues(alpha: 0.3),
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isOnline
+                        ? Icons.wifi_rounded
+                        : Icons.wifi_off_rounded,
+                    size: 11,
+                    color:
+                        _isOnline ? AppTheme.colorAccent : Colors.orange,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isOnline ? 'Online' : 'Offline',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _isOnline
+                          ? AppTheme.colorAccent
+                          : Colors.orange,
                     ),
                   ),
                 ],
