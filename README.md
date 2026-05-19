@@ -15,7 +15,7 @@ The system currently supports **tomato**, **potato**, and a general multi-crop m
 ## Features
 
 - **On-device AI inference** — TensorFlow Lite models run entirely on the device; no data is sent to a server
-- **Multi-architecture model support** — handles both EfficientNet-style classification models `[1, num_classes]` and YOLOv8-style detection models `[1, 4+classes, anchors]`
+- **Multi-architecture model support** — handles both EfficientNet-style classification models `[1, num_classes]` and YOLOv12-style detection models `[1, 4+classes, anchors]`
 - **Five-stage inference pipeline**
   1. Image decode
   2. Plant presence validation (colour, sharpness, brightness)
@@ -150,7 +150,7 @@ Label files go under `assets/labels/`:
 | `tomato_labels.txt` | Tomato model |
 | `potato_labels.txt` | Potato model |
 
-The app reads the label file at runtime and maps model output indices to disease names. Both EfficientNet-style (classification) and YOLOv8-style (detection) model output shapes are handled automatically.
+The app reads the label file at runtime and maps model output indices to disease names. Both EfficientNet-style (classification) and YOLOv12-style (detection) model output shapes are handled automatically.
 
 ---
 
@@ -243,7 +243,7 @@ tools/
 
 This project was developed as a **Master's thesis** in partial fulfilment of the requirements for a postgraduate degree. The research explores the feasibility of deploying convolutional neural network-based plant disease classification on resource-constrained mobile and desktop devices using an offline-first architecture.
 
-The thesis covers the full development lifecycle: literature review, dataset preparation, model training (EfficientNet and YOLOv8 architectures), Flutter application design, evaluation of inference accuracy, and field usability assessment.
+The thesis covers the full development lifecycle: literature review, dataset preparation, model training (EfficientNet and YOLOv12 architectures), Flutter application design, evaluation of inference accuracy, and field usability assessment.
 
 ---
 
