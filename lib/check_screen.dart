@@ -7,17 +7,15 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_application_1/ai_service.dart';
-import 'package:flutter_application_1/efficientnet_model.dart';
+import 'package:flutter_application_1/inference_pipeline.dart';
+import 'package:flutter_application_1/diagnostic_report.dart';
+import 'package:flutter_application_1/diagnostic_report_generator.dart';
 import 'package:flutter_application_1/app_theme.dart';
 import 'package:flutter_application_1/disease_screen.dart';
 import 'package:flutter_application_1/database_helper.dart';
 import 'package:flutter_application_1/models.dart';
 
 enum CheckMode { camera, import }
-
-// Possible states for the AI enhancement card.
-enum _AiState { idle, loading, done, offline, noKey }
 
 class CheckScreen extends StatefulWidget {
   final CheckMode mode;
@@ -30,14 +28,12 @@ class CheckScreen extends StatefulWidget {
 class _CheckScreenState extends State<CheckScreen> {
   File? _image;
   bool _isProcessing = false;
-  String? _diseaseName;
-  String? _confidenceText;
+  InferenceResult? _result;
+  DiagnosticReport? _report;
   List<String> _labels = [];
+  String _cropRef = 'all_crops';
   double? _lat;
   double? _lng;
-
-  _AiState _aiState = _AiState.idle;
-  String? _aiAnalysis;
 
   @override
   void initState() {
@@ -57,11 +53,11 @@ class _CheckScreenState extends State<CheckScreen> {
 
   Future<void> _loadLabels() async {
     final prefs = await SharedPreferences.getInstance();
-    final cropRef = prefs.getString('cropReference') ?? 'all_crops';
+    _cropRef = prefs.getString('cropReference') ?? 'all_crops';
     String labelFile;
-    if (cropRef == 'tomato') {
+    if (_cropRef == 'tomato') {
       labelFile = 'assets/labels/tomato_labels.txt';
-    } else if (cropRef == 'potato') {
+    } else if (_cropRef == 'potato') {
       labelFile = 'assets/labels/potato_labels.txt';
     } else {
       labelFile = 'assets/labels/all_crops_labels.txt';
@@ -117,9 +113,24 @@ class _CheckScreenState extends State<CheckScreen> {
     setState(() => _isProcessing = true);
 
     if (kIsWeb) {
+      const webResult = InferenceResult(
+        plantDetected: false,
+        diagnosisName: 'Web not supported',
+        confidence: 0,
+        effectiveConfidence: 0,
+        confidenceLevel: ConfidenceLevel.uncertain,
+        userMessage:
+            'Disease detection is not available on web. '
+            'Please use the Android app.',
+        shouldSaveToHistory: false,
+      );
       setState(() {
-        _diseaseName = 'Web not supported';
-        _confidenceText = 'Use the Android app for disease detection.';
+        _result = webResult;
+        _report = DiagnosticReportGenerator.generate(
+          result: webResult,
+          labels: _labels,
+          cropRef: _cropRef,
+        );
         _isProcessing = false;
       });
       return;
@@ -128,55 +139,36 @@ class _CheckScreenState extends State<CheckScreen> {
     await _captureLocation();
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final cropRef = prefs.getString('cropReference') ?? 'all_crops';
       // ignore: avoid_print
-      print('[DETECT] cropRef=$cropRef labels=${_labels.length}');
-      final Uint8List imageBytes = await _image!.readAsBytes();
-      // ignore: avoid_print
-      print('[DETECT] image bytes=${imageBytes.length}');
+      print('[DETECT] cropRef=$_cropRef labels=${_labels.length}');
+      final imageBytes = await _image!.readAsBytes();
 
-      // ── On-device TFLite inference (always offline-capable) ──────────────
-      final model = diseaseClassifierModel(cropRef);
-      // ignore: avoid_print
-      print('[DETECT] running inference…');
-      final probabilities = await model.runInference(imageBytes);
-      model.dispose();
-      // ignore: avoid_print
-      print('[DETECT] inference done probs=${probabilities.length} max=${probabilities.reduce((a,b)=>a>b?a:b).toStringAsFixed(4)}');
+      final pipeline = InferencePipeline(labels: _labels, cropRef: _cropRef);
+      final result = await pipeline.run(imageBytes);
 
-      int maxIndex = 0;
-      double maxProb = 0;
-      for (int i = 0; i < probabilities.length; i++) {
-        if (probabilities[i] > maxProb) {
-          maxProb = probabilities[i];
-          maxIndex = i;
-        }
+      final report = DiagnosticReportGenerator.generate(
+        result: result,
+        labels: _labels,
+        cropRef: _cropRef,
+      );
+
+      if (result.shouldSaveToHistory) {
+        await DatabaseHelper.instance.addHistory(History(
+          historyDisease: result.diagnosisName,
+          historyPercentage: result.displayConfidence,
+          historyImage: _image!.path,
+          historyLat: _lat,
+          historyLng: _lng,
+        ));
       }
-
-      final name = (_labels.isNotEmpty && maxIndex < _labels.length)
-          ? _labels[maxIndex]
-          : 'Unknown Disease';
-      final confidence = '${(maxProb * 100).toStringAsFixed(1)}%';
-
-      await DatabaseHelper.instance.addHistory(History(
-        historyDisease: name,
-        historyPercentage: confidence,
-        historyImage: _image!.path,
-        historyLat: _lat,
-        historyLng: _lng,
-      ));
 
       if (mounted) {
         setState(() {
-          _diseaseName = name;
-          _confidenceText = confidence;
+          _result = result;
+          _report = report;
           _isProcessing = false;
         });
       }
-
-      // ── Optional Claude AI enhancement (online only) ──────────────────────
-      _runAiEnhancement(name, confidence);
     } catch (e, st) {
       // ignore: avoid_print
       print('[DETECT] ERROR: $e\n$st');
@@ -184,125 +176,32 @@ class _CheckScreenState extends State<CheckScreen> {
         final msg = e.toString();
         final isMissingLib = msg.contains('libtensorflowlite') ||
             msg.contains('dynamic library');
-        final isImageError = msg.contains('decode') || msg.contains('image');
-        setState(() {
-          _diseaseName = 'Detection failed';
-          _confidenceText = isMissingLib
-              ? 'TFLite native library not found on this platform.\n'
+        final failResult = InferenceResult(
+          plantDetected: false,
+          diagnosisName: 'Detection failed',
+          confidence: 0,
+          effectiveConfidence: 0,
+          confidenceLevel: ConfidenceLevel.uncertain,
+          userMessage: isMissingLib
+              ? 'The TFLite native library was not found on this platform.\n'
                   'Run tools/setup_tflite.sh to build it for Linux/Windows.'
-              : isImageError
-                  ? 'Could not read the image. Try a different file.'
-                  : 'An unexpected error occurred. Please try again.';
+              : 'The image could not be processed. Please try a different photo.',
+          shouldSaveToHistory: false,
+        );
+        setState(() {
+          _result = failResult;
+          _report = DiagnosticReportGenerator.generate(
+            result: failResult,
+            labels: _labels,
+            cropRef: _cropRef,
+          );
           _isProcessing = false;
-          _aiState = _AiState.idle;
         });
       }
     }
   }
 
-  Future<void> _runAiEnhancement(String name, String confidence) async {
-    if (_image == null) return;
-
-    final key = await AiService.getApiKey();
-    if (key == null || key.isEmpty) {
-      if (mounted) setState(() => _aiState = _AiState.noKey);
-      return;
-    }
-
-    if (mounted) setState(() => _aiState = _AiState.loading);
-
-    final result = await AiService.analyseImage(
-      imageFile: _image!,
-      diseaseName: name,
-      confidence: confidence,
-    );
-
-    if (!mounted) return;
-    if (result.offline) {
-      setState(() => _aiState = _AiState.offline);
-    } else if (result.text != null) {
-      setState(() {
-        _aiAnalysis = result.text;
-        _aiState = _AiState.done;
-      });
-    } else {
-      // Error or no key — fall back to noKey state so user can still configure
-      setState(() => _aiState = _AiState.noKey);
-    }
-  }
-
-  Future<void> _showApiKeyDialog() async {
-    final existing = await AiService.getApiKey();
-    final ctrl = TextEditingController(text: existing ?? '');
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF111111),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Claude API Key',
-            style:
-                TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter your Anthropic API key to enable AI-powered analysis.',
-              style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.white.withValues(alpha: 0.55)),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: ctrl,
-              obscureText: true,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'sk-ant-...',
-                hintStyle: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.3)),
-                filled: true,
-                fillColor: Colors.white.withValues(alpha: 0.06),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.15)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.15)),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white54)),
-          ),
-          TextButton(
-            onPressed: () async {
-              await AiService.saveApiKey(ctrl.text);
-              if (ctx.mounted) Navigator.pop(ctx);
-              if (_diseaseName != null &&
-                  _confidenceText != null &&
-                  _image != null) {
-                _runAiEnhancement(_diseaseName!, _confidenceText!);
-              }
-            },
-            child: const Text('Save',
-                style: TextStyle(color: AppTheme.colorAccent)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -317,28 +216,36 @@ class _CheckScreenState extends State<CheckScreen> {
       ),
       body: _image == null
           ? const Center(
-              child:
-                  CircularProgressIndicator(color: AppTheme.colorAccent))
+              child: CircularProgressIndicator(color: AppTheme.colorAccent))
           : _buildContent(),
     );
   }
 
   Widget _buildContent() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildImageCard(),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           if (_isProcessing)
             _buildProcessingCard()
-          else if (_diseaseName != null) ...[
-            _buildResultCard(),
-            const SizedBox(height: 14),
-            _buildAiCard(),
-          ],
-          const SizedBox(height: 24),
+          else if (_report != null)
+            _ReportView(
+              report: _report!,
+              onViewDetails: () {
+                if (_result != null &&
+                    _result!.plantDetected &&
+                    !_result!.isHealthy) {
+                  Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) =>
+                        DiseaseScreen(diseaseName: _result!.diagnosisName),
+                  ));
+                }
+              },
+            ),
+          const SizedBox(height: 20),
           if (!_isProcessing)
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -364,7 +271,7 @@ class _CheckScreenState extends State<CheckScreen> {
         ClipRRect(
           borderRadius: BorderRadius.circular(20),
           child: Image.file(_image!,
-              height: 280, width: double.infinity, fit: BoxFit.cover),
+              height: 260, width: double.infinity, fit: BoxFit.cover),
         ),
         if (_lat != null && _lng != null)
           Positioned(
@@ -385,8 +292,8 @@ class _CheckScreenState extends State<CheckScreen> {
                   const SizedBox(width: 4),
                   Text(
                     '${_lat!.toStringAsFixed(4)}, ${_lng!.toStringAsFixed(4)}',
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 11),
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                 ],
               ),
@@ -409,104 +316,232 @@ class _CheckScreenState extends State<CheckScreen> {
         children: [
           CircularProgressIndicator(color: AppTheme.colorAccent),
           SizedBox(height: 16),
-          Text('Analysing plant…',
+          Text('Analysing image…',
               style: TextStyle(color: Colors.white70, fontSize: 14)),
         ],
       ),
     );
   }
+}
 
-  Widget _buildResultCard() {
-    final isHealthy = _diseaseName?.toLowerCase() == 'healthy';
-    final isFailed = _diseaseName == 'Detection failed';
-    final accent =
-        isHealthy ? AppTheme.colorAccent : const Color(0xFFFF6B6B);
+// ══════════════════════════════════════════════════════════════════════════════
+// Report view — all sections
+// ══════════════════════════════════════════════════════════════════════════════
 
+class _ReportView extends StatelessWidget {
+  final DiagnosticReport report;
+  final VoidCallback onViewDetails;
+
+  const _ReportView({required this.report, required this.onViewDetails});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!report.hasFullReport) {
+      return _NoPlantCard(message: report.userMessage);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _PlantIdCard(report: report),
+        const SizedBox(height: 10),
+        _DiagnosisCard(report: report, onViewDetails: onViewDetails),
+        if (!report.isHealthy) ...[
+          const SizedBox(height: 10),
+          _SymptomsCard(report: report),
+          const SizedBox(height: 10),
+          _TreatmentCard(report: report),
+          if (report.alternatives.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _AlternativesCard(report: report),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+// ── No-plant guidance card ─────────────────────────────────────────────────────
+
+class _NoPlantCard extends StatelessWidget {
+  final String message;
+  const _NoPlantCard({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: Colors.white.withValues(alpha: 0.1), width: 0.5),
+      decoration: _cardDecoration(),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded,
+              color: Colors.white.withValues(alpha: 0.45), size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                  fontSize: 15, color: Colors.white70, height: 1.6),
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+// ── Plant identification card ─────────────────────────────────────────────────
+
+class _PlantIdCard extends StatelessWidget {
+  final DiagnosticReport report;
+  const _PlantIdCard({required this.report});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      decoration: _cardDecoration(),
+      child: Row(
+        children: [
+          const Icon(Icons.eco_rounded, color: AppTheme.colorAccent, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('PLANT IDENTIFIED',
+                    style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.colorAccent,
+                        letterSpacing: 1.4)),
+                const SizedBox(height: 3),
+                Text(report.plantSpecies,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white)),
+              ],
+            ),
+          ),
+          _TypeChip(report.conditionTypeName, report.isHealthy),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Main diagnosis card ────────────────────────────────────────────────────────
+
+class _DiagnosisCard extends StatelessWidget {
+  final DiagnosticReport report;
+  final VoidCallback onViewDetails;
+  const _DiagnosisCard({required this.report, required this.onViewDetails});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent =
+        report.isHealthy ? AppTheme.colorAccent : const Color(0xFFFF6B6B);
+    final isMedium = report.confidenceLevel == ConfidenceLevel.medium;
+    final isLowOrUncertain = report.confidenceLevel == ConfidenceLevel.low ||
+        report.confidenceLevel == ConfidenceLevel.uncertain;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _cardDecoration(
+          borderColor: isLowOrUncertain
+              ? Colors.orange.withValues(alpha: 0.3)
+              : null),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header row
           Row(
             children: [
               Icon(
-                isHealthy
+                report.isHealthy
                     ? Icons.check_circle_rounded
-                    : Icons.warning_amber_rounded,
-                color: accent,
-                size: 20,
+                    : isLowOrUncertain
+                        ? Icons.help_outline_rounded
+                        : Icons.warning_amber_rounded,
+                color: isLowOrUncertain ? Colors.orange : accent,
+                size: 18,
               ),
               const SizedBox(width: 8),
               Text(
-                isHealthy ? 'Plant is healthy' : 'Disease detected',
+                report.isHealthy
+                    ? 'HEALTHY'
+                    : isLowOrUncertain
+                        ? 'LOW CONFIDENCE'
+                        : 'DISEASE DETECTED',
                 style: TextStyle(
-                  fontSize: 12,
-                  color: accent,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: isLowOrUncertain ? Colors.orange : accent,
+                  letterSpacing: 1.2,
                 ),
               ),
               const Spacer(),
-              // Offline / online badge
-              if (!isFailed)
-                _ConnectivityBadge(aiState: _aiState),
+              if (!isLowOrUncertain)
+                _SeverityBadge(report.severity),
             ],
           ),
           const SizedBox(height: 12),
+          // Disease name
           Text(
-            _diseaseName!,
+            report.primaryDiagnosis,
             style: const TextStyle(
-              fontSize: 22,
+              fontSize: 24,
               fontWeight: FontWeight.w700,
               color: Colors.white,
-              letterSpacing: -0.3,
+              letterSpacing: -0.4,
             ),
           ),
           const SizedBox(height: 6),
+          // Confidence
           Text(
-            isFailed ? _confidenceText! : 'Confidence: $_confidenceText',
-            style: const TextStyle(fontSize: 14, color: Colors.white60),
+            isMedium
+                ? 'Confidence: ${report.displayConfidence} (moderate)'
+                : 'Confidence: ${report.displayConfidence}',
+            style: TextStyle(
+                fontSize: 13,
+                color: isMedium ? Colors.orange : Colors.white54),
           ),
-          if (!isHealthy && !isFailed) ...[
-            const SizedBox(height: 16),
+          // User message
+          if (report.userMessage.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              report.userMessage,
+              style: const TextStyle(
+                  fontSize: 14, color: Colors.white70, height: 1.5),
+            ),
+          ],
+          // View details button
+          if (!report.isHealthy && !isLowOrUncertain) ...[
+            const SizedBox(height: 14),
             GestureDetector(
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      DiseaseScreen(diseaseName: _diseaseName!),
-                ),
-              ),
+              onTap: onViewDetails,
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 10),
+                    horizontal: 14, vertical: 9),
                 decoration: BoxDecoration(
-                  color: AppTheme.colorAccent.withValues(alpha: 0.12),
+                  color: AppTheme.colorAccent.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: AppTheme.colorAccent.withValues(alpha: 0.3),
-                    width: 0.5,
-                  ),
+                      color: AppTheme.colorAccent.withValues(alpha: 0.3),
+                      width: 0.5),
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.info_outline_rounded,
-                        color: AppTheme.colorAccent, size: 16),
-                    SizedBox(width: 8),
-                    Text(
-                      'View disease details',
-                      style: TextStyle(
-                        color: AppTheme.colorAccent,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                        color: AppTheme.colorAccent, size: 15),
+                    SizedBox(width: 7),
+                    Text('View disease details',
+                        style: TextStyle(
+                            color: AppTheme.colorAccent,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
                   ],
                 ),
               ),
@@ -516,163 +551,419 @@ class _CheckScreenState extends State<CheckScreen> {
       ),
     );
   }
-
-  Widget _buildAiCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.colorAccent.withValues(alpha: 0.18),
-          width: 0.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header row
-          Row(
-            children: [
-              const Icon(Icons.auto_awesome_rounded,
-                  color: AppTheme.colorAccent, size: 15),
-              const SizedBox(width: 7),
-              const Text(
-                'AI ANALYSIS',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.colorAccent,
-                  letterSpacing: 1.5,
-                ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: _showApiKeyDialog,
-                child: Icon(Icons.settings_rounded,
-                    size: 16,
-                    color: Colors.white.withValues(alpha: 0.3)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _buildAiBody(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAiBody() {
-    switch (_aiState) {
-      case _AiState.loading:
-        return Row(
-          children: [
-            SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: AppTheme.colorAccent.withValues(alpha: 0.7),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text('Analysing with Claude…',
-                style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.white.withValues(alpha: 0.5))),
-          ],
-        );
-
-      case _AiState.done:
-        return Text(
-          _aiAnalysis!,
-          style: const TextStyle(
-              fontSize: 13, color: Colors.white70, height: 1.55),
-        );
-
-      case _AiState.offline:
-        return GestureDetector(
-          onTap: () {
-            if (_diseaseName != null && _confidenceText != null) {
-              _runAiEnhancement(_diseaseName!, _confidenceText!);
-            }
-          },
-          child: Row(
-            children: [
-              const Icon(Icons.cloud_off_rounded,
-                  color: Colors.white38, size: 14),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'No internet — AI analysis unavailable offline. '
-                  'Tap to retry when connected.',
-                  style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.white.withValues(alpha: 0.38),
-                      height: 1.5),
-                ),
-              ),
-            ],
-          ),
-        );
-
-      case _AiState.noKey:
-        return GestureDetector(
-          onTap: _showApiKeyDialog,
-          child: Text(
-            'Tap to configure Claude API key for AI-powered analysis.',
-            style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.35),
-                height: 1.5),
-          ),
-        );
-
-      case _AiState.idle:
-        return Text(
-          'Preparing AI analysis…',
-          style: TextStyle(
-              fontSize: 13, color: Colors.white.withValues(alpha: 0.3)),
-        );
-    }
-  }
 }
 
-// ── Small connectivity badge shown in the result card header ─────────────────
-class _ConnectivityBadge extends StatelessWidget {
-  final _AiState aiState;
-  const _ConnectivityBadge({required this.aiState});
+// ── Symptoms card ─────────────────────────────────────────────────────────────
+
+class _SymptomsCard extends StatefulWidget {
+  final DiagnosticReport report;
+  const _SymptomsCard({required this.report});
+
+  @override
+  State<_SymptomsCard> createState() => _SymptomsCardState();
+}
+
+class _SymptomsCardState extends State<_SymptomsCard> {
+  bool _expanded = true;
 
   @override
   Widget build(BuildContext context) {
-    final bool isOffline = aiState == _AiState.offline;
-    final color =
-        isOffline ? Colors.orange : AppTheme.colorAccent;
-    final icon =
-        isOffline ? Icons.cloud_off_rounded : Icons.cloud_done_rounded;
-    final label = isOffline ? 'Offline' : 'On-device';
-
-    return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-        border:
-            Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+    return _ExpandableSection(
+      icon: Icons.biotech_rounded,
+      iconColor: const Color(0xFFFFB347),
+      title: 'SYMPTOM ANALYSIS',
+      expanded: _expanded,
+      onToggle: () => setState(() => _expanded = !_expanded),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 10, color: color),
-          const SizedBox(width: 4),
-          Text(label,
+          // Visual symptoms
+          const Text('What the AI observed:',
               style: TextStyle(
-                  fontSize: 10,
-                  color: color,
-                  fontWeight: FontWeight.w600)),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white54)),
+          const SizedBox(height: 8),
+          ...widget.report.observedSymptoms
+              .map((s) => _BulletRow(s, color: const Color(0xFFFFB347))),
+          if (widget.report.biologicalExplanation.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('Biological explanation:',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white54)),
+            const SizedBox(height: 6),
+            Text(
+              widget.report.biologicalExplanation,
+              style: const TextStyle(
+                  fontSize: 13, color: Colors.white70, height: 1.6),
+            ),
+          ],
+          if (widget.report.isContagious &&
+              widget.report.isolationAdvice != null) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: Colors.red.withValues(alpha: 0.25), width: 0.5),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded,
+                      color: Colors.redAccent, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.report.isolationAdvice!,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.redAccent,
+                          height: 1.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
+
+// ── Treatment card ────────────────────────────────────────────────────────────
+
+class _TreatmentCard extends StatefulWidget {
+  final DiagnosticReport report;
+  const _TreatmentCard({required this.report});
+
+  @override
+  State<_TreatmentCard> createState() => _TreatmentCardState();
+}
+
+class _TreatmentCardState extends State<_TreatmentCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.report;
+    return _ExpandableSection(
+      icon: Icons.healing_rounded,
+      iconColor: AppTheme.colorAccent,
+      title: 'TREATMENT PLAN',
+      expanded: _expanded,
+      onToggle: () => setState(() => _expanded = !_expanded),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (r.immediateActions.isNotEmpty) ...[
+            _subHeader('Immediate actions', Icons.flash_on_rounded,
+                Colors.orangeAccent),
+            ...r.immediateActions.map((s) => _BulletRow(s)),
+            const SizedBox(height: 12),
+          ],
+          if (r.organicTreatments.isNotEmpty) ...[
+            _subHeader('Organic / natural treatments',
+                Icons.spa_rounded, const Color(0xFF66BB6A)),
+            ...r.organicTreatments.map((s) => _BulletRow(s)),
+            const SizedBox(height: 12),
+          ],
+          if (r.chemicalTreatments.isNotEmpty) ...[
+            _subHeader('Chemical treatments',
+                Icons.science_rounded, const Color(0xFF42A5F5)),
+            ...r.chemicalTreatments.map((s) => _BulletRow(s)),
+            const SizedBox(height: 12),
+          ],
+          if (r.environmentalCorrections.isNotEmpty) ...[
+            _subHeader('Environmental corrections',
+                Icons.wb_sunny_rounded, const Color(0xFFFFD54F)),
+            ...r.environmentalCorrections.map((s) => _BulletRow(s)),
+            const SizedBox(height: 12),
+          ],
+          if (r.preventionSteps.isNotEmpty) ...[
+            _subHeader('Prevention', Icons.shield_rounded,
+                AppTheme.colorAccent),
+            ...r.preventionSteps.map((s) => _BulletRow(s)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Alternatives card ─────────────────────────────────────────────────────────
+
+class _AlternativesCard extends StatefulWidget {
+  final DiagnosticReport report;
+  const _AlternativesCard({required this.report});
+
+  @override
+  State<_AlternativesCard> createState() => _AlternativesCardState();
+}
+
+class _AlternativesCardState extends State<_AlternativesCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ExpandableSection(
+      icon: Icons.compare_arrows_rounded,
+      iconColor: Colors.white38,
+      title: 'ALTERNATIVE DIAGNOSES',
+      expanded: _expanded,
+      onToggle: () => setState(() => _expanded = !_expanded),
+      child: Column(
+        children: widget.report.alternatives.map((alt) {
+          final pct = (alt.probability * 100).toStringAsFixed(1);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(alt.name,
+                      style: const TextStyle(
+                          fontSize: 14, color: Colors.white70)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text('$pct%',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white54,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Reusable sub-widgets
+// ══════════════════════════════════════════════════════════════════════════════
+
+class _ExpandableSection extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  const _ExpandableSection({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.expanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header tap area
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Row(
+                children: [
+                  Icon(icon, color: iconColor, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: iconColor,
+                      letterSpacing: 1.4,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    expanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: Colors.white30,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Collapsible body
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: child,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BulletRow extends StatelessWidget {
+  final String text;
+  final Color color;
+  const _BulletRow(this.text, {this.color = Colors.white38});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 6, right: 8),
+            child: Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                  color: color, shape: BoxShape.circle),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                  fontSize: 13, color: Colors.white70, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Widget _subHeader(String title, IconData icon, Color color) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        Icon(icon, color: color, size: 14),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color),
+        ),
+      ],
+    ),
+  );
+}
+
+class _TypeChip extends StatelessWidget {
+  final String label;
+  final bool isHealthy;
+  const _TypeChip(this.label, this.isHealthy);
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        isHealthy ? AppTheme.colorAccent : Colors.white.withValues(alpha: 0.4);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: color),
+      ),
+    );
+  }
+}
+
+class _SeverityBadge extends StatelessWidget {
+  final SeverityLevel severity;
+  const _SeverityBadge(this.severity);
+
+  Color get _color {
+    switch (severity) {
+      case SeverityLevel.none:
+        return AppTheme.colorAccent;
+      case SeverityLevel.low:
+        return const Color(0xFF66BB6A);
+      case SeverityLevel.medium:
+        return const Color(0xFFFFD54F);
+      case SeverityLevel.high:
+        return Colors.orange;
+      case SeverityLevel.critical:
+        return Colors.redAccent;
+    }
+  }
+
+  String get _label {
+    switch (severity) {
+      case SeverityLevel.none:
+        return 'NONE';
+      case SeverityLevel.low:
+        return 'LOW';
+      case SeverityLevel.medium:
+        return 'MEDIUM';
+      case SeverityLevel.high:
+        return 'HIGH';
+      case SeverityLevel.critical:
+        return 'CRITICAL';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: _color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _color.withValues(alpha: 0.4), width: 0.5),
+      ),
+      child: Text(
+        _label,
+        style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: _color,
+            letterSpacing: 1),
+      ),
+    );
+  }
+}
+
+// ── Shared card decoration ─────────────────────────────────────────────────────
+
+BoxDecoration _cardDecoration({Color? borderColor}) => BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.05),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: borderColor ?? Colors.white.withValues(alpha: 0.09),
+        width: 0.5,
+      ),
+    );
